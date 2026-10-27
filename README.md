@@ -29,7 +29,7 @@ The Android build is a real dialer, not a mock: it reads your contacts and call 
 
 ## Install
 
-**Android (APK)** — download [`apk/Phone-Dialer.apk`](apk/Phone-Dialer.apk), open it on the phone, and allow install from unknown sources when prompted. Android 7.0+ (API 24). Adaptive icon on Android 8+.
+**Android (APK)** — grab it from the [latest release](https://github.com/technicalnihilist-lgtm/ios-phone-dialer/releases/latest) (or [`apk/Phone-Dialer.apk`](apk/Phone-Dialer.apk) in the repo), open it on the phone, and allow install from unknown sources when prompted. Android 7.0+ (API 24). Adaptive icon on Android 8+.
 
 On first launch it asks for contacts, call log, phone and microphone permissions. To use the in-call controls, tap **Set** on the banner and make Phone your default dialer.
 
