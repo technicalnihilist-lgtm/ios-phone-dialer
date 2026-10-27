@@ -741,15 +741,20 @@ tabbar.addEventListener("pointerup", release);
 tabbar.addEventListener("pointercancel", release);
 
 /* ---------------- list rendering ---------------- */
-$("favs").innerHTML = [0,3,4,6].map(i => {
-  const p = people[i];
-  return `<button class="fav" data-tel="${p.t}" data-name="${p.n}">${avHTML(p)}<b>${p.n.split(" ")[0]}</b><small>mobile</small></button>`;
-}).join("");
+function renderFavs() {
+  const idx = [0,1,2,3].filter(i => people[i]);
+  $("favs").innerHTML = idx.map(i => {
+    const p = people[i];
+    return `<button class="fav" data-tel="${p.t}" data-name="${p.n}">${avHTML(p)}<b>${p.n.split(" ")[0]}</b><small>mobile</small></button>`;
+  }).join("");
+}
+renderFavs();
 
 function renderRecents(filter) {
   const all = dialed
     .map(d => ({ p:{ n:d.name, t:d.number, c:["#8e8e93","#636366"] }, when:d.when, kind:"out", label:"mobile" }))
-    .concat(recents.map(r => ({ p: people[r.i], when:r.when, kind:r.kind, label:r.label })));
+    .concat(recents.map(r => ({ p: r.p || people[r.i], when:r.when, kind:r.kind, label:r.label })))
+    .filter(r => r.p);
   const rows = all.filter(r => filter !== "missed" || r.kind === "missed");
   $("recents").innerHTML = rows.map(r => {
     const p = r.p;
@@ -792,7 +797,7 @@ function renderContacts(q) {
 renderContacts("");
 $("q").addEventListener("input", e => renderContacts(e.target.value));
 
-$("voicemail").innerHTML = voicemails.map(v => {
+$("voicemail").innerHTML = voicemails.filter(v => people[v.i]).map(v => {
   const p = people[v.i];
   return `<button class="row vm" data-tel="${p.t}" data-name="${p.n}">
     <span class="play"><svg viewBox="0 0 24 24"><path d="M8 5.6 19 12 8 18.4z"/></svg></span>
@@ -831,8 +836,10 @@ function placeCall(number, name) {
   try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
   renderRecents(seg.querySelectorAll("button")[1].classList.contains("on") ? "missed" : "all");
   if (navigator.vibrate) navigator.vibrate(8);
-  if (MOBILE) {
-    window.location.href = "tel:" + d;          // hands off to the real Phone app
+  if (window.PhoneNative && PhoneNative.dial) {
+    PhoneNative.dial(d);                        // native app: place a real call
+  } else if (MOBILE) {
+    window.location.href = "tel:" + d;          // browser: hand off to the system dialer
   } else {
     startCall(d, { n: name || fmt(raw) });      // desktop: show the in-app call screen
   }
@@ -896,6 +903,18 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 (function installTip() {
   const card = $("install"), btn = $("installBtn"), x = $("installX");
   if (!card) return;
+  if (window.PhoneNative) {
+    try { if (PhoneNative.isDefaultDialer()) return; } catch (e) { return; }
+    $("installText").innerHTML = "Set <b>Phone</b> as your default dialer to get the in-call speaker, mute, hold and recording controls.";
+    btn.hidden = false;
+    btn.textContent = "Set";
+    btn.addEventListener("click", () => {
+      try { PhoneNative.requestDefaultDialer(); } catch (e) {}
+      card.classList.remove("show");
+    });
+    card.classList.add("show");
+    return;
+  }
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
   let off = false;
@@ -922,6 +941,20 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 /* ---------------- boot ---------------- */
 snap();
 render();
+
+/* real contacts and call history, when running inside the Android app */
+(function hydrateNative() {
+  if (!window.PhoneNative) return;
+  try {
+    const cs = JSON.parse(PhoneNative.contacts() || "[]");
+    if (cs.length) { people.length = 0; cs.forEach(p => people.push(p)); }
+    const rs = JSON.parse(PhoneNative.callLog() || "[]");
+    if (rs.length) { recents.length = 0; rs.forEach(r => recents.push(r)); }
+  } catch (e) {}
+  renderFavs();
+  renderRecents("all");
+  renderContacts($("q").value || "");
+})();
 addEventListener("resize", () => { snap(); fitNumber(); moveSeg(seg.querySelector("button.on") ? [...seg.querySelectorAll("button")].findIndex(b => b.classList.contains("on")) : 0); });
 if (document.fonts) document.fonts.ready.then(() => { snap(); fitNumber(); moveSeg(0); });
 moveSeg(0);

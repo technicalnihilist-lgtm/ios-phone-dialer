@@ -26,11 +26,11 @@ aapt2 link -o build/base.apk \
 
 echo "== javac"
 javac -J-Xmx224m -J-XX:MaxMetaspaceSize=96m -J-XX:CompressedClassSpaceSize=48m -J-XX:ActiveProcessorCount=1 -J-Xss512k -J-XX:+UseSerialGC -J-XX:-TieredCompilation \
-  -source 8 -target 8 -nowarn \
+  -source 8 -target 8 -nowarn -encoding UTF-8 \
   -bootclasspath "$PLATFORM" -classpath "$PLATFORM" \
   -d build/classes \
-  src/com/phone/dialer/MainActivity.java \
-  build/gen/com/phone/dialer/R.java 2>&1 | grep -v "bootstrap\|deprecat" || true
+  $(find src -name '*.java') \
+  build/gen/com/phone/dialer/R.java
 
 echo "== d8"
 $J -cp "$BT/lib/d8.jar" com.android.tools.r8.D8 \

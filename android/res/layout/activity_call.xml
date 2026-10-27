@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/call_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingLeft="24dp"
+        android:paddingRight="24dp"
+        android:paddingTop="78dp"
+        android:paddingBottom="34dp">
+
+        <TextView
+            android:id="@+id/call_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#FFFFFF"
+            android:textSize="34sp"
+            android:letterSpacing="-0.01" />
+
+        <TextView
+            android:id="@+id/call_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text="calling…"
+            android:textColor="#B3FFFFFF"
+            android:textSize="17sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/keypad_panel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:visibility="gone"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/k1" style="@style/KeypadKey" android:text="1" />
+                    <Button android:id="@+id/k2" style="@style/KeypadKey" android:text="2" />
+                    <Button android:id="@+id/k3" style="@style/KeypadKey" android:text="3" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/k4" style="@style/KeypadKey" android:text="4" />
+                    <Button android:id="@+id/k5" style="@style/KeypadKey" android:text="5" />
+                    <Button android:id="@+id/k6" style="@style/KeypadKey" android:text="6" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/k7" style="@style/KeypadKey" android:text="7" />
+                    <Button android:id="@+id/k8" style="@style/KeypadKey" android:text="8" />
+                    <Button android:id="@+id/k9" style="@style/KeypadKey" android:text="9" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/kstar" style="@style/KeypadKey" android:text="*" />
+                    <Button android:id="@+id/k0" style="@style/KeypadKey" android:text="0" />
+                    <Button android:id="@+id/khash" style="@style/KeypadKey" android:text="#" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="6dp">
+
+            <LinearLayout style="@style/CallCell">
+                <ImageView
+                    android:id="@+id/btn_mute"
+                    style="@style/CallIcon"
+                    android:src="@drawable/ic_mute" />
+                <TextView
+                    android:id="@+id/lbl_mute"
+                    style="@style/CallLabel"
+                    android:text="mute" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CallCell">
+                <ImageView
+                    android:id="@+id/btn_keypad"
+                    style="@style/CallIcon"
+                    android:src="@drawable/ic_keypad" />
+                <TextView style="@style/CallLabel" android:text="keypad" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CallCell">
+                <ImageView
+                    android:id="@+id/btn_speaker"
+                    style="@style/CallIcon"
+                    android:src="@drawable/ic_speaker" />
+                <TextView
+                    android:id="@+id/lbl_speaker"
+                    style="@style/CallLabel"
+                    android:text="speaker" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="22dp">
+
+            <LinearLayout style="@style/CallCell">
+                <ImageView
+                    android:id="@+id/btn_hold"
+                    style="@style/CallIcon"
+                    android:src="@drawable/ic_hold" />
+                <TextView
+                    android:id="@+id/lbl_hold"
+                    style="@style/CallLabel"
+                    android:text="hold" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CallCell">
+                <ImageView
+                    android:id="@+id/btn_addcall"
+                    style="@style/CallIcon"
+                    android:src="@drawable/ic_addcall" />
+                <TextView style="@style/CallLabel" android:text="add call" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CallCell">
+                <ImageView
+                    android:id="@+id/btn_record"
+                    style="@style/CallIcon"
+                    android:src="@drawable/ic_record" />
+                <TextView
+                    android:id="@+id/lbl_record"
+                    style="@style/CallLabel"
+                    android:text="record" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/btn_end"
+            android:layout_width="70dp"
+            android:layout_height="70dp"
+            android:layout_gravity="center_horizontal"
+            android:background="@drawable/end_btn_bg"
+            android:padding="19dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_end"
+            android:contentDescription="End call" />
+    </LinearLayout>
+</FrameLayout>
