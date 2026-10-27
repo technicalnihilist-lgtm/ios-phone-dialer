@@ -74,11 +74,10 @@ button{font-family:inherit;color:inherit}
 @media (max-height:700px){.statusbar{height:44px}}
 .statusbar .time{font-variant-numeric:tabular-nums;min-width:54px}
 .device.calling .statusbar{color:#fff}
-.sb-right{display:flex;align-items:center;gap:6px}
-.sb-right svg{display:block;height:12px;width:auto;fill:currentColor}
-.sb-battery{width:25px;height:12px;position:relative;border:1px solid currentColor;border-radius:3.5px;opacity:.98;box-sizing:border-box}
-.sb-battery::after{content:"";position:absolute;right:-3.5px;top:3.5px;width:2px;height:5px;border-radius:0 1px 1px 0;background:currentColor;opacity:.5}
-.sb-battery i{position:absolute;inset:1.5px;right:6px;background:currentColor;border-radius:1.5px;display:block}
+.empty{
+  padding:56px 24px;text-align:center;color:var(--label2);
+  font-size:17px;line-height:1.4;
+}
 
 /* ---------- app ---------- */
 .app{flex:1;position:relative;min-height:0;z-index:10}
@@ -379,11 +378,6 @@ button{font-family:inherit;color:inherit}
 
   <div class="statusbar">
     <span class="time" id="clock">9:41</span>
-    <span class="sb-right">
-      <svg viewBox="0 0 18 12" aria-label="Cellular"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
-      <svg viewBox="0 0 16 12" aria-label="Wi-Fi"><path d="M8 11.2 5.9 8.7a3.1 3.1 0 0 1 4.2 0L8 11.2Zm-4-4.6L2.3 4.5a8.1 8.1 0 0 1 11.4 0L12 6.6a5.7 5.7 0 0 0-8 0ZM.4 1.9 1.9 3.4a9.1 9.1 0 0 1 12.2 0l1.5-1.5a11.2 11.2 0 0 0-15.2 0Z"/></svg>
-      <span class="sb-battery"><i></i></span>
-    </span>
   </div>
 
   <main class="app" id="app" data-view="keypad">
@@ -479,35 +473,12 @@ button{font-family:inherit;color:inherit}
 "use strict";
 
 /* ---------------- data ---------------- */
-const people = [
-  {n:"Ava Chen",       t:"4155550142", c:["#ff7a9c","#ff3d71"]},
-  {n:"Ben Okafor",     t:"2125550178", c:["#6aa8ff","#3a5bff"]},
-  {n:"Carla Díaz",     t:"3055550119", c:["#ffb347","#ff7a1a"]},
-  {n:"Dev Patel",      t:"6505550163", c:["#59e0b4","#14a37f"]},
-  {n:"Emi Tanaka",     t:"4085550127", c:["#c58bff","#7b4dff"]},
-  {n:"Farah Haddad",   t:"7185550190", c:["#ff9a8b","#e0457b"]},
-  {n:"Gus Lindqvist",  t:"2065550155", c:["#7fd8ff","#2aa4d6"]},
-  {n:"Hana Kapoor",    t:"9175550121", c:["#9be15d","#00a86b"]},
-  {n:"Ivan Petrov",    t:"3125550144", c:["#ffd166","#ef8a17"]},
-  {n:"Jo Mensah",      t:"6175550188", c:["#8f9bff","#4b5bd6"]}
-];
+/* no sample contacts — the Android build fills this from the device */
+const people = [];
 
-const recents = [
-  {i:0, when:"9:41 AM",  kind:"in",     label:"mobile"},
-  {i:2, when:"Monday",   kind:"missed", label:"Missed call"},
-  {i:1, when:"Monday",   kind:"out",    label:"mobile"},
-  {i:3, when:"Sunday",   kind:"in",     label:"mobile"},
-  {i:5, when:"Saturday", kind:"out",    label:"mobile"},
-  {i:2, when:"Oct 21",   kind:"in",     label:"mobile"},
-  {i:7, when:"Oct 20",   kind:"missed", label:"Missed call"},
-  {i:4, when:"Oct 18",   kind:"in",     label:"home"}
-];
+const recents = [];
 
-const voicemails = [
-  {i:2, when:"9:41 AM",  len:"0:14", new:true,  text:"Hey, it's me. Call me back when you get a chance — nothing urgent."},
-  {i:6, when:"Monday",   len:"0:32", new:true,  text:"Hi, this is Gus from the studio about Thursday's session."},
-  {i:5, when:"Oct 21",   len:"0:08", new:false, text:"Just confirming the reservation for Friday evening."}
-];
+const voicemails = [];
 
 const initials = n => n.split(" ").map(w => w[0]).join("").slice(0,2);
 const avHTML = p => `<span class="av" style="--a:${p.c[0]};--b:${p.c[1]}">${initials(p.n)}</span>`;
@@ -639,7 +610,7 @@ document.addEventListener("pointerdown", e => {
 $("pasteBtn").addEventListener("click", async () => {
   closeMenu();
   let txt = "";
-  try { txt = await navigator.clipboard.readText(); } catch (err) { txt = "4155550142"; }
+  try { txt = await navigator.clipboard.readText(); } catch (err) { txt = ""; }
   const clean = (txt || "").replace(/[^\d+*#]/g, "");
   if (clean) { value = clean.slice(0, 20); render(); }
 });
@@ -743,6 +714,10 @@ tabbar.addEventListener("pointercancel", release);
 /* ---------------- list rendering ---------------- */
 function renderFavs() {
   const idx = [0,1,2,3].filter(i => people[i]);
+  if (!idx.length) {
+    $("favs").innerHTML = '<div class="empty" style="grid-column:1/-1">No Favorites</div>';
+    return;
+  }
   $("favs").innerHTML = idx.map(i => {
     const p = people[i];
     return `<button class="fav" data-tel="${p.t}" data-name="${p.n}">${avHTML(p)}<b>${p.n.split(" ")[0]}</b><small>mobile</small></button>`;
@@ -764,7 +739,7 @@ function renderRecents(filter) {
       <time>${r.when}</time>
       <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
     </button>`;
-  }).join("") || `<div style="padding:26px;text-align:center;color:var(--label2);font-size:15px">No Missed Calls</div>`;
+  }).join("") || `<div class="empty">${filter === "missed" ? "No Missed Calls" : "No Calls"}</div>`;
 }
 renderRecents("all");
 
@@ -792,12 +767,13 @@ function renderContacts(q) {
       <span class="t"><b>${p.n}</b><small>${fmt(p.t)}</small></span>
     </button>`;
   });
-  $("contacts").innerHTML = out;
+  $("contacts").innerHTML = out || '<div class="empty">No Contacts</div>';
 }
 renderContacts("");
 $("q").addEventListener("input", e => renderContacts(e.target.value));
 
-$("voicemail").innerHTML = voicemails.filter(v => people[v.i]).map(v => {
+const vmRows = voicemails.filter(v => people[v.i]);
+$("voicemail").innerHTML = vmRows.length ? vmRows.map(v => {
   const p = people[v.i];
   return `<button class="row vm" data-tel="${p.t}" data-name="${p.n}">
     <span class="play"><svg viewBox="0 0 24 24"><path d="M8 5.6 19 12 8 18.4z"/></svg></span>
@@ -805,7 +781,7 @@ $("voicemail").innerHTML = voicemails.filter(v => people[v.i]).map(v => {
     <time>${v.when}</time>
     ${v.new ? `<span class="dot"></span>` : ""}
   </button>`;
-}).join("");
+}).join("") : '<div class="empty">No Voicemail</div>';
 
 /* tapping a person starts a call, exactly like the real app */
 document.addEventListener("click", e => {

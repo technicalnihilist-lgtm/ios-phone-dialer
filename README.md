@@ -6,24 +6,12 @@ The Android build is a real dialer, not a mock: it reads your contacts and call 
 
 <table>
   <tr>
-    <td><img src="screenshots/1-keypad-dark.png" width="240" alt="Keypad, dark"></td>
-    <td><img src="screenshots/2-keypad-light.png" width="240" alt="Keypad, light"></td>
-    <td><img src="screenshots/3-recents.png" width="240" alt="Recents"></td>
+    <td><img src="screenshots/1-keypad-dark.png" width="260" alt="Keypad, dark"></td>
+    <td><img src="screenshots/2-keypad-light.png" width="260" alt="Keypad, light"></td>
   </tr>
   <tr>
     <td align="center">Keypad · dark</td>
     <td align="center">Keypad · light</td>
-    <td align="center">Recents</td>
-  </tr>
-  <tr>
-    <td><img src="screenshots/4-contacts.png" width="240" alt="Contacts"></td>
-    <td><img src="screenshots/5-call.png" width="240" alt="Call screen"></td>
-    <td></td>
-  </tr>
-  <tr>
-    <td align="center">Contacts</td>
-    <td align="center">In-call screen</td>
-    <td></td>
   </tr>
 </table>
 
@@ -83,7 +71,7 @@ manifest.webmanifest     PWA manifest
 sw.js                    service worker (offline cache)
 icons/                   app icons (180 / 192 / 512)
 screenshots/             rendered from index.html
-apk/Phone-Dialer.apk     signed, installable build (v2.0)
+apk/Phone-Dialer.apk     signed, installable build (v2.1)
 android/                 native app source
   AndroidManifest.xml    permissions, dialer role, InCallService
   src/com/phone/dialer/
@@ -100,4 +88,4 @@ android/                 native app source
 
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
-- The browser build uses sample contacts; the Android build replaces them with the real ones at launch.
+- There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
