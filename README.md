@@ -6,12 +6,24 @@ The Android build is a real dialer, not a mock: it reads your contacts and call 
 
 <table>
   <tr>
-    <td><img src="screenshots/1-keypad-dark.png" width="260" alt="Keypad, dark"></td>
-    <td><img src="screenshots/2-keypad-light.png" width="260" alt="Keypad, light"></td>
+    <td><img src="https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/screenshots/1-keypad-dark.png" width="240" alt="Keypad, dark"></td>
+    <td><img src="https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/screenshots/2-keypad-light.png" width="240" alt="Keypad, light"></td>
+    <td><img src="https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/screenshots/3-call.png" width="240" alt="In-call screen"></td>
   </tr>
   <tr>
     <td align="center">Keypad · dark</td>
     <td align="center">Keypad · light</td>
+    <td align="center">In-call</td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/screenshots/4-favorites.png" width="240" alt="Favorites"></td>
+    <td><img src="https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/screenshots/5-recents.png" width="240" alt="Recents"></td>
+    <td></td>
+  </tr>
+  <tr>
+    <td align="center">Favorites</td>
+    <td align="center">Recents</td>
+    <td></td>
   </tr>
 </table>
 
@@ -89,3 +101,16 @@ android/                 native app source
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
 - There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
+
+## Store metadata
+
+| Field | Value |
+| --- | --- |
+| App name | Phone |
+| Package name / App ID | `com.phone.dialer` |
+| Category | Utility |
+| Version | 2.1 (versionCode 4) |
+| Minimum Android | 7.0 (API 24) |
+| Price | Free |
+| Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |
+| License | MIT |
