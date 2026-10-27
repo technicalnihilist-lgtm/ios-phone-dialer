@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Phone">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
+<title>Phone</title>
+<style>
+:root{
+  --bg:#000;--label:#fff;--label2:rgba(235,235,245,.6);--label3:rgba(235,235,245,.3);
+  --fill:rgba(120,120,128,.32);--fill-press:rgba(120,120,128,.52);
+  --sep:rgba(84,84,88,.65);--blue:#0a84ff;--green:#30d158;--red:#ff453a;
+  --card:#1c1c1e;--glassbg:rgba(44,44,48,.62);--glassline:rgba(255,255,255,.12);
+  --tabsel:rgba(255,255,255,.16);
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --k:clamp(62px,19.1vw,75px);
+  --gap:clamp(16px,6.6vw,26px);
+  --vgap:12px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){
+  :root{
+    --bg:#fff;--label:#000;--label2:rgba(60,60,67,.6);--label3:rgba(60,60,67,.3);
+    --fill:rgba(120,120,128,.19);--fill-press:rgba(120,120,128,.32);
+    --sep:rgba(60,60,67,.25);--blue:#007aff;--green:#34c759;--red:#ff3b30;
+    --card:#f2f2f7;--glassbg:rgba(248,248,250,.72);--glassline:rgba(0,0,0,.07);
+    --tabsel:rgba(255,255,255,.75);
+    color-scheme:light;
+  }
+}
+@media (max-height:700px){:root{--k:60px;--vgap:10px;--gap:20px}}
+*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",system-ui,sans-serif;
+  background:#000;color:var(--label);overflow:hidden;display:grid;place-items:center;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  user-select:none;-webkit-user-select:none;
+}
+button{font-family:inherit;color:inherit}
+
+/* ---------- device ---------- */
+.device{
+  position:relative;width:100vw;height:100dvh;background:var(--bg);
+  display:flex;flex-direction:column;overflow:hidden;
+  padding-top:env(safe-area-inset-top,0px);
+}
+.island{display:none}
+@media (min-width:520px){
+  body{background:radial-gradient(120% 90% at 50% 0%,#1b1b21 0%,#0a0a0c 55%,#000 100%)}
+  .device{
+    width:393px;height:852px;border-radius:56px;padding-top:0;
+    box-shadow:0 0 0 11px #0b0b0c,0 0 0 12.5px #3a3a3d,0 0 0 13.5px #101012,0 46px 90px rgba(0,0,0,.72);
+  }
+  .island{
+    display:block;position:absolute;top:12px;left:50%;transform:translateX(-50%);
+    width:122px;height:35px;border-radius:19px;background:#000;z-index:70;
+  }
+}
+
+/* ---------- status bar ---------- */
+.statusbar{
+  flex:none;height:54px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 26px 0 32px;font-size:16px;font-weight:600;letter-spacing:.1px;
+  color:var(--label);position:relative;z-index:40;
+}
+@media (max-height:700px){.statusbar{height:44px}}
+.statusbar .time{font-variant-numeric:tabular-nums;min-width:54px}
+.device.calling .statusbar{color:#fff}
+.sb-right{display:flex;align-items:center;gap:6px}
+.sb-right svg{display:block;height:12px;width:auto;fill:currentColor}
+.sb-battery{width:25px;height:12px;position:relative;border:1px solid currentColor;border-radius:3.5px;opacity:.98;box-sizing:border-box}
+.sb-battery::after{content:"";position:absolute;right:-3.5px;top:3.5px;width:2px;height:5px;border-radius:0 1px 1px 0;background:currentColor;opacity:.5}
+.sb-battery i{position:absolute;inset:1.5px;right:6px;background:currentColor;border-radius:1.5px;display:block}
+
+/* ---------- app ---------- */
+.app{flex:1;position:relative;min-height:0;z-index:10}
+.view{
+  position:absolute;inset:0;display:none;overflow-y:auto;overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;
+}
+.view::-webkit-scrollbar{display:none}
+.app[data-view=keypad]    #v-keypad{display:flex}
+.app[data-view=favorites] #v-favorites{display:block}
+.app[data-view=recents]   #v-recents{display:block}
+.app[data-view=contacts]  #v-contacts{display:block}
+.app[data-view=voicemail] #v-voicemail{display:block}
+
+/* ---------- keypad ---------- */
+#v-keypad{
+  flex-direction:column;align-items:center;overflow:hidden;
+  padding:0 24px calc(96px + var(--safe-b));
+}
+.dialtop{
+  width:100%;flex:none;padding-top:14px;min-height:104px;
+  text-align:center;position:relative;
+}
+.number{
+  display:block;width:100%;height:50px;line-height:50px;
+  font-size:40px;font-weight:400;letter-spacing:.2px;white-space:nowrap;
+  overflow:hidden;color:var(--label);font-variant-numeric:tabular-nums;
+  transition:font-size .08s linear;
+}
+.addnum{
+  display:none;margin:2px auto 0;padding:5px 12px;border:0;background:none;
+  font-size:17px;color:var(--blue);cursor:pointer;border-radius:8px;
+}
+.addnum.show{display:inline-block}
+.addnum:active{opacity:.5}
+.match{
+  display:none;align-items:center;justify-content:center;gap:9px;margin:6px auto 0;
+  background:none;border:0;padding:4px 10px;cursor:pointer;border-radius:12px;
+  width:max-content;max-width:100%;
+}
+.match.show{display:flex}
+.match .av{width:30px;height:30px;font-size:12px}
+.match span.mn{font-size:17px;color:var(--label)}
+.match:active{opacity:.55}
+
+.pad{
+  display:grid;grid-template-columns:repeat(3,var(--k));gap:var(--vgap) var(--gap);
+  margin-top:auto;
+}
+.key{
+  width:var(--k);height:var(--k);border-radius:50%;border:0;
+  background:var(--fill);color:var(--label);cursor:pointer;position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07);
+  padding:0;transition:background .13s ease,transform .13s cubic-bezier(.3,1.5,.5,1);
+}
+.key b{
+  font-size:calc(var(--k)*.47);font-weight:400;line-height:1;letter-spacing:0;
+  font-variant-numeric:tabular-nums;
+}
+.key small{
+  font-size:10px;font-weight:600;letter-spacing:1.7px;line-height:12px;height:12px;
+  margin-top:2px;color:var(--label2);text-transform:uppercase;
+}
+.key.sym b{font-size:calc(var(--k)*.58);padding-top:5px}
+.key.sym small{visibility:hidden}
+.key:active,.key.press{background:var(--fill-press);transform:scale(1.055)}
+.key:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+
+.callrow{
+  flex:none;display:grid;grid-template-columns:repeat(3,var(--k));
+  gap:0 var(--gap);justify-items:center;margin-top:calc(var(--vgap) + 8px);
+  padding-bottom:4px;
+}
+.call{
+  grid-column:2;width:var(--k);height:var(--k);border-radius:50%;border:0;
+  background:var(--green);display:grid;place-items:center;cursor:pointer;
+  transition:filter .13s,transform .13s cubic-bezier(.3,1.5,.5,1);
+}
+.call svg{width:calc(var(--k)*.42);height:calc(var(--k)*.42);fill:#fff}
+.call:active{filter:brightness(1.18);transform:scale(1.05)}
+.del{
+  grid-column:3;width:var(--k);height:var(--k);border-radius:50%;border:0;
+  background:none;display:grid;place-items:center;color:var(--label);cursor:pointer;
+  opacity:0;pointer-events:none;transition:opacity .18s ease;
+}
+.del.show{opacity:1;pointer-events:auto}
+.del:active{opacity:.45}
+.del svg{
+  width:calc(var(--k)*.44);height:calc(var(--k)*.44);fill:none;stroke:currentColor;
+  stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;
+}
+
+/* ---------- shared list bits ---------- */
+.hdr{
+  display:flex;align-items:flex-end;justify-content:space-between;
+  padding:6px 16px 8px 20px;position:sticky;top:0;z-index:5;
+  background:linear-gradient(var(--bg) 72%,transparent);
+}
+.hdr h1{font-size:34px;font-weight:700;letter-spacing:-.6px;margin:0;line-height:1.15}
+.hdr button{
+  border:0;background:none;color:var(--blue);font-size:17px;padding:4px 0 6px;cursor:pointer;
+}
+.hdr button:active{opacity:.5}
+.av{
+  width:40px;height:40px;border-radius:50%;flex:none;display:grid;place-items:center;
+  font-size:15px;font-weight:600;color:#fff;letter-spacing:.2px;
+  background:linear-gradient(160deg,var(--a),var(--b));
+}
+.seg{
+  display:flex;gap:0;margin:2px 16px 10px;padding:2px;border-radius:9px;
+  background:var(--fill);position:relative;
+}
+.seg button{
+  flex:1;border:0;background:none;font-size:13px;font-weight:600;color:var(--label);
+  padding:6px 0;border-radius:7px;cursor:pointer;position:relative;z-index:1;
+  transition:color .2s;
+}
+.seg button:not(.on){color:var(--label2)}
+.seg .segpill{
+  position:absolute;top:2px;bottom:2px;border-radius:7px;background:var(--card);
+  box-shadow:0 3px 8px rgba(0,0,0,.18);transition:left .28s cubic-bezier(.3,1.2,.4,1),width .28s cubic-bezier(.3,1.2,.4,1);
+}
+@media (prefers-color-scheme:light){.seg .segpill{background:#fff}}
+
+.list{background:var(--card);margin:0 16px;border-radius:14px;overflow:hidden}
+.list.plain{background:none;margin:0}
+.row{
+  display:flex;align-items:center;gap:12px;width:100%;padding:8px 14px;
+  background:none;border:0;text-align:left;cursor:pointer;min-height:53px;position:relative;
+}
+.row:active{background:var(--fill)}
+.row+.row::before{
+  content:"";position:absolute;left:66px;right:0;top:0;height:.5px;background:var(--sep);
+}
+.row .av{width:40px;height:40px}
+.row .t{flex:1;min-width:0;line-height:1.25}
+.row .t b{display:block;font-size:17px;font-weight:400;color:var(--label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t small{display:block;font-size:14px;color:var(--label2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.missed .t b{color:var(--red)}
+.row time{font-size:15px;color:var(--label2);flex:none;margin-left:6px}
+.row .info{
+  width:26px;height:26px;border-radius:50%;border:0;background:none;flex:none;
+  display:grid;place-items:center;color:var(--blue);cursor:pointer;
+}
+.row .info svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6}
+
+.sec{
+  font-size:13px;font-weight:600;color:var(--label2);padding:11px 16px 3px 20px;
+  letter-spacing:.4px;background:var(--bg);
+}
+
+/* favorites */
+.favs{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:2px 16px 8px}
+.fav{
+  display:flex;flex-direction:column;align-items:center;gap:2px;padding:16px 8px 13px;
+  border:0;border-radius:18px;background:var(--card);cursor:pointer;text-align:center;
+}
+.fav:active{background:var(--fill)}
+.fav .av{width:54px;height:54px;font-size:20px;margin-bottom:7px}
+.fav b{font-size:16px;font-weight:500;color:var(--label)}
+.fav small{font-size:12px;color:var(--label2)}
+
+/* contacts search */
+.searchwrap{padding:0 16px 12px}
+.search{
+  display:flex;align-items:center;gap:7px;background:var(--fill);border-radius:10px;
+  padding:7px 9px;color:var(--label2);
+}
+.search svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
+.search input{
+  border:0;background:none;outline:none;font:inherit;font-size:17px;color:var(--label);
+  width:100%;padding:0;-webkit-appearance:none;
+}
+.search input::placeholder{color:var(--label2)}
+
+/* voicemail */
+.vm .play{
+  width:34px;height:34px;border-radius:50%;border:0;background:none;flex:none;
+  display:grid;place-items:center;color:var(--blue);cursor:pointer;
+}
+.vm .play svg{width:22px;height:22px;fill:currentColor}
+.vm .t b{font-weight:600}
+.vm .dot{width:9px;height:9px;border-radius:50%;background:var(--blue);flex:none}
+
+/* ---------- tab bar ---------- */
+.tabbar{
+  position:absolute;left:9px;right:9px;bottom:calc(8px + var(--safe-b));height:60px;
+  display:flex;align-items:center;border-radius:30px;z-index:30;
+  background:var(--glassbg);border:.5px solid var(--glassline);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(30px) saturate(180%);
+  box-shadow:0 8px 26px rgba(0,0,0,.28);
+  touch-action:none;overflow:hidden;
+}
+.tabbar .pill{
+  position:absolute;top:5px;bottom:5px;left:0;width:0;border-radius:25px;z-index:0;
+  pointer-events:none;background:var(--tabsel);
+  box-shadow:0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.28);
+  transition:left .42s cubic-bezier(.32,1.4,.42,1),width .42s cubic-bezier(.32,1.4,.42,1),transform .3s cubic-bezier(.3,1.6,.5,1),opacity .2s;
+}
+.tabbar .pill.noanim{transition:none!important}
+.tabbar .pill.grab{transform:scale(1.06);opacity:.9}
+.tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  padding:0;border:0;background:none;cursor:pointer;position:relative;z-index:1;
+  color:var(--label2);transition:color .2s;height:100%;
+}
+.tab svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.tab span{font-size:10px;font-weight:500;letter-spacing:.1px}
+.tab.on{color:var(--label)}
+
+/* ---------- call screen ---------- */
+.callscreen{
+  position:absolute;inset:0;z-index:35;display:flex;flex-direction:column;
+  padding:70px 26px calc(34px + var(--safe-b));
+  transform:translateY(100%);transition:transform .42s cubic-bezier(.32,.9,.24,1);
+  background:
+    radial-gradient(90% 60% at 50% 0%,#3a3a44 0%,transparent 70%),
+    linear-gradient(#101014,#050506);
+  color:#fff;
+}
+.callscreen.show{transform:none}
+.cs-top{text-align:center;flex:none;padding-top:26px}
+.cs-name{font-size:34px;font-weight:400;letter-spacing:-.3px;margin-bottom:6px}
+.cs-status{font-size:17px;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums}
+.cs-actions{
+  margin-top:auto;display:grid;grid-template-columns:repeat(3,1fr);
+  gap:24px 8px;justify-items:center;padding-bottom:34px;
+}
+.cs-btn{
+  display:flex;flex-direction:column;align-items:center;gap:7px;
+  border:0;background:none;color:#fff;cursor:pointer;font-size:11px;
+}
+.cs-btn i{
+  width:70px;height:70px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(255,255,255,.16);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  transition:background .15s,transform .15s;
+}
+.cs-btn:active i{background:rgba(255,255,255,.3);transform:scale(.96)}
+.cs-btn.on i{background:#fff}
+.cs-btn.on i svg{stroke:#000;fill:#000}
+.cs-btn svg{width:30px;height:30px;fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.cs-end{
+  align-self:center;width:70px;height:70px;border-radius:50%;border:0;background:#ff453a;
+  display:grid;place-items:center;cursor:pointer;flex:none;
+}
+.cs-end svg{width:32px;height:32px;fill:#fff;transform:rotate(135deg)}
+.cs-end:active{filter:brightness(1.15)}
+
+/* install card */
+.install{
+  position:absolute;left:10px;right:10px;bottom:calc(78px + var(--safe-b));z-index:34;
+  display:none;align-items:center;gap:10px;padding:11px 12px;border-radius:16px;
+  background:var(--glassbg);border:.5px solid var(--glassline);
+  -webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);
+  box-shadow:0 10px 28px rgba(0,0,0,.3);font-size:13px;line-height:1.3;color:var(--label);
+}
+.install.show{display:flex}
+.install span{flex:1}
+.install b{font-weight:600}
+.install button{
+  border:0;background:none;color:var(--blue);font-size:14px;font-weight:600;
+  padding:4px 6px;cursor:pointer;flex:none;
+}
+.install #installX{color:var(--label2);font-size:20px;line-height:1;padding:0 2px}
+
+/* paste menu */
+.menu{
+  position:absolute;z-index:90;display:none;transform-origin:50% 0;
+  background:var(--glassbg);border:.5px solid var(--glassline);border-radius:13px;
+  -webkit-backdrop-filter:blur(28px) saturate(180%);backdrop-filter:blur(28px) saturate(180%);
+  box-shadow:0 12px 34px rgba(0,0,0,.35);overflow:hidden;min-width:190px;
+  animation:menuIn .18s cubic-bezier(.3,1.4,.5,1) both;
+}
+.menu.show{display:block}
+.menu button{
+  display:block;width:100%;text-align:left;border:0;background:none;padding:13px 16px;
+  font-size:16px;color:var(--label);cursor:pointer;
+}
+.menu button:active{background:var(--fill)}
+@keyframes menuIn{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:scale(1)}}
+
+@keyframes inR{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
+@keyframes inL{from{opacity:0;transform:translateX(-26px)}to{opacity:1;transform:none}}
+.app.goR .view,.app.goL .view{animation-duration:.3s;animation-timing-function:cubic-bezier(.2,.8,.2,1);animation-fill-mode:both}
+.app.goR .view{animation-name:inR}
+.app.goL .view{animation-name:inL}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001s!important;transition-duration:.001s!important}
+}
+</style>
+</head>
+<body>
+
+<div class="device" id="device">
+  <div class="island"></div>
+
+  <div class="statusbar">
+    <span class="time" id="clock">9:41</span>
+    <span class="sb-right">
+      <svg viewBox="0 0 18 12" aria-label="Cellular"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+      <svg viewBox="0 0 16 12" aria-label="Wi-Fi"><path d="M8 11.2 5.9 8.7a3.1 3.1 0 0 1 4.2 0L8 11.2Zm-4-4.6L2.3 4.5a8.1 8.1 0 0 1 11.4 0L12 6.6a5.7 5.7 0 0 0-8 0ZM.4 1.9 1.9 3.4a9.1 9.1 0 0 1 12.2 0l1.5-1.5a11.2 11.2 0 0 0-15.2 0Z"/></svg>
+      <span class="sb-battery"><i></i></span>
+    </span>
+  </div>
+
+  <main class="app" id="app" data-view="keypad">
+
+    <!-- KEYPAD -->
+    <section class="view" id="v-keypad" aria-label="Keypad">
+      <div class="dialtop" id="dialtop">
+        <div class="number" id="num" aria-live="polite"></div>
+        <button class="match" id="match"><span class="av" id="matchAv"></span><span class="mn" id="matchName"></span></button>
+        <button class="addnum" id="addnum">Add Number</button>
+      </div>
+      <div class="pad" id="pad"></div>
+      <div class="callrow">
+        <button class="call" id="call" aria-label="Call">
+          <svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>
+        </button>
+        <button class="del" id="del" aria-label="Delete">
+          <svg viewBox="0 0 24 24"><path d="M8.5 4.5h11A1.5 1.5 0 0 1 21 6v12a1.5 1.5 0 0 1-1.5 1.5h-11a1.5 1.5 0 0 1-1.1-.5l-6.5-6.4a1 1 0 0 1 0-1.2l6.5-6.4a1.5 1.5 0 0 1 1.1-.5Z"/><path d="m11.6 9.6 5 4.8m0-4.8-5 4.8"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- FAVORITES -->
+    <section class="view" id="v-favorites" aria-label="Favorites">
+      <div class="hdr"><h1>Favorites</h1><button>Edit</button></div>
+      <div class="favs" id="favs"></div>
+    </section>
+
+    <!-- RECENTS -->
+    <section class="view" id="v-recents" aria-label="Recents">
+      <div class="hdr"><h1>Recents</h1><button>Edit</button></div>
+      <div class="seg" id="seg"><span class="segpill" id="segpill"></span><button class="on">All</button><button>Missed</button></div>
+      <div class="list plain" id="recents"></div>
+    </section>
+
+    <!-- CONTACTS -->
+    <section class="view" id="v-contacts" aria-label="Contacts">
+      <div class="hdr"><h1>Contacts</h1><button>+</button></div>
+      <div class="searchwrap">
+        <label class="search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+          <input id="q" type="search" placeholder="Search" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <div id="contacts"></div>
+    </section>
+
+    <!-- VOICEMAIL -->
+    <section class="view" id="v-voicemail" aria-label="Voicemail">
+      <div class="hdr"><h1>Voicemail</h1><button>Greeting</button></div>
+      <div class="list plain" id="voicemail"></div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar" id="tabbar" role="tablist" aria-label="Phone">
+    <span class="pill" id="pill"></span>
+    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><path d="m12 3.4 2.6 5.3 5.9.9-4.3 4.2 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.6l5.9-.9z"/></svg><span>Favorites</span></button>
+    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.2 2"/></svg><span>Recents</span></button>
+    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.2a7.6 7.6 0 0 1 14.8 0"/></svg><span>Contacts</span></button>
+    <button class="tab on" role="tab"><svg viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="6.4" cy="6.4" r="1.5"/><circle cx="12" cy="6.4" r="1.5"/><circle cx="17.6" cy="6.4" r="1.5"/><circle cx="6.4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="17.6" cy="12" r="1.5"/><circle cx="6.4" cy="17.6" r="1.5"/><circle cx="12" cy="17.6" r="1.5"/><circle cx="17.6" cy="17.6" r="1.5"/></g></svg><span>Keypad</span></button>
+    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><circle cx="5.8" cy="12" r="3.4"/><circle cx="18.2" cy="12" r="3.4"/><path d="M9.2 12h5.6"/></svg><span>Voicemail</span></button>
+  </nav>
+
+  <div class="callscreen" id="callscreen">
+    <div class="cs-top">
+      <div class="cs-name" id="csName"></div>
+      <div class="cs-status" id="csStatus">calling…</div>
+    </div>
+    <div class="cs-actions">
+      <button class="cs-btn" data-act="mute"><i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M4 4l16 16"/></svg></i>mute</button>
+      <button class="cs-btn" data-act="keypad"><i><svg viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="6.5" cy="7" r="1.4"/><circle cx="12" cy="7" r="1.4"/><circle cx="17.5" cy="7" r="1.4"/><circle cx="6.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="17.5" cy="12" r="1.4"/><circle cx="6.5" cy="17" r="1.4"/><circle cx="12" cy="17" r="1.4"/><circle cx="17.5" cy="17" r="1.4"/></g></svg></i>keypad</button>
+      <button class="cs-btn" data-act="audio"><i><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.4 6.2a8 8 0 0 1 0 11.6"/></svg></i>audio</button>
+      <button class="cs-btn" data-act="add"><i><svg viewBox="0 0 24 24"><circle cx="9.5" cy="8" r="3.6"/><path d="M2.8 19.6a6.9 6.9 0 0 1 13.4 0M18 7.5v5M15.5 10h5"/></svg></i>add call</button>
+      <button class="cs-btn" data-act="ft"><i><svg viewBox="0 0 24 24"><rect x="2.6" y="6" width="12.8" height="12" rx="3.2"/><path d="m15.4 12 6-3.4v6.8z"/></svg></i>FaceTime</button>
+      <button class="cs-btn" data-act="contacts"><i><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="10" r="3.2"/><path d="M6 19.2a6.6 6.6 0 0 1 12 0"/></svg></i>contacts</button>
+    </div>
+    <button class="cs-end" id="csEnd" aria-label="End call">
+      <svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>
+    </button>
+  </div>
+
+  <div class="install" id="install">
+    <span id="installText">Install Phone for full-screen, offline use.</span>
+    <button id="installBtn" hidden>Install</button>
+    <button id="installX" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <div class="menu" id="menu"><button id="pasteBtn">Paste</button></div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------------- data ---------------- */
+const people = [
+  {n:"Ava Chen",       t:"4155550142", c:["#ff7a9c","#ff3d71"]},
+  {n:"Ben Okafor",     t:"2125550178", c:["#6aa8ff","#3a5bff"]},
+  {n:"Carla Díaz",     t:"3055550119", c:["#ffb347","#ff7a1a"]},
+  {n:"Dev Patel",      t:"6505550163", c:["#59e0b4","#14a37f"]},
+  {n:"Emi Tanaka",     t:"4085550127", c:["#c58bff","#7b4dff"]},
+  {n:"Farah Haddad",   t:"7185550190", c:["#ff9a8b","#e0457b"]},
+  {n:"Gus Lindqvist",  t:"2065550155", c:["#7fd8ff","#2aa4d6"]},
+  {n:"Hana Kapoor",    t:"9175550121", c:["#9be15d","#00a86b"]},
+  {n:"Ivan Petrov",    t:"3125550144", c:["#ffd166","#ef8a17"]},
+  {n:"Jo Mensah",      t:"6175550188", c:["#8f9bff","#4b5bd6"]}
+];
+
+const recents = [
+  {i:0, when:"9:41 AM",  kind:"in",     label:"mobile"},
+  {i:2, when:"Monday",   kind:"missed", label:"Missed call"},
+  {i:1, when:"Monday",   kind:"out",    label:"mobile"},
+  {i:3, when:"Sunday",   kind:"in",     label:"mobile"},
+  {i:5, when:"Saturday", kind:"out",    label:"mobile"},
+  {i:2, when:"Oct 21",   kind:"in",     label:"mobile"},
+  {i:7, when:"Oct 20",   kind:"missed", label:"Missed call"},
+  {i:4, when:"Oct 18",   kind:"in",     label:"home"}
+];
+
+const voicemails = [
+  {i:2, when:"9:41 AM",  len:"0:14", new:true,  text:"Hey, it's me. Call me back when you get a chance — nothing urgent."},
+  {i:6, when:"Monday",   len:"0:32", new:true,  text:"Hi, this is Gus from the studio about Thursday's session."},
+  {i:5, when:"Oct 21",   len:"0:08", new:false, text:"Just confirming the reservation for Friday evening."}
+];
+
+const initials = n => n.split(" ").map(w => w[0]).join("").slice(0,2);
+const avHTML = p => `<span class="av" style="--a:${p.c[0]};--b:${p.c[1]}">${initials(p.n)}</span>`;
+
+/* ---------------- keypad ---------------- */
+const KEYS = [["1",""],["2","ABC"],["3","DEF"],["4","GHI"],["5","JKL"],["6","MNO"],
+              ["7","PQRS"],["8","TUV"],["9","WXYZ"],["*",""],["0","+"],["#",""]];
+
+const $ = id => document.getElementById(id);
+const app = $("app"), num = $("num"), pad = $("pad"), del = $("del"),
+      hint = $("addnum"), matchEl = $("match"), matchAv = $("matchAv"),
+      matchName = $("matchName"), dialtop = $("dialtop");
+let value = "";
+
+/* call history, restored from storage before anything renders */
+let dialed = [];
+try { dialed = JSON.parse(localStorage.getItem("phone.dialed") || "[]"); } catch (e) { dialed = []; }
+if (!Array.isArray(dialed)) dialed = [];
+
+KEYS.forEach(([d, l]) => {
+  const b = document.createElement("button");
+  b.className = "key" + (/[*#]/.test(d) ? " sym" : "");
+  b.dataset.d = d;
+  b.setAttribute("aria-label", d);
+  b.innerHTML = `<b>${d}</b><small>${l}</small>`;
+  b.addEventListener("click", () => add(d));
+  if (d === "0") {
+    let t;
+    b.addEventListener("pointerdown", () => {
+      t = setTimeout(() => { value = value.slice(0, -1); add("+"); }, 500);
+    });
+    ["pointerup","pointerleave","pointercancel"].forEach(e =>
+      b.addEventListener(e, () => clearTimeout(t)));
+  }
+  pad.appendChild(b);
+});
+
+function fmt(v) {
+  const d = v.replace(/\D/g, "");
+  if (v.startsWith("+") || /[*#]/.test(v) || d.length > 11) return v;
+  if (d.length > 6) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  if (d.length > 3) return `(${d.slice(0,3)}) ${d.slice(3)}`;
+  return d;
+}
+
+/* T9 lookup: match a contact by digits or by the letters on the keys */
+const T9 = {2:"abc",3:"def",4:"ghi",5:"jkl",6:"mno",7:"pqrs",8:"tuv",9:"wxyz"};
+const toDigits = s => s.toLowerCase().split("").map(ch => {
+  for (const k in T9) if (T9[k].includes(ch)) return k;
+  return "";
+}).join("");
+
+function findMatch() {
+  const d = value.replace(/\D/g, "");
+  if (d.length < 3) return null;
+  return people.find(p =>
+    p.t.startsWith(d) ||
+    toDigits(p.n).startsWith(d) ||
+    p.n.toLowerCase().startsWith(value.toLowerCase())
+  ) || null;
+}
+
+function fitNumber() {
+  num.style.fontSize = "40px";
+  const max = num.clientWidth;
+  let size = 40;
+  while (num.scrollWidth > max && size > 19) {
+    size -= 1;
+    num.style.fontSize = size + "px";
+  }
+}
+
+function render() {
+  num.textContent = fmt(value);
+  del.classList.toggle("show", !!value);
+  hint.classList.toggle("show", !!value);
+  const m = value ? findMatch() : null;
+  matchEl.classList.toggle("show", !!m);
+  if (m) {
+    matchAv.style.setProperty("--a", m.c[0]);
+    matchAv.style.setProperty("--b", m.c[1]);
+    matchAv.textContent = initials(m.n);
+    matchName.textContent = m.n;
+  }
+  fitNumber();
+}
+
+function add(c) {
+  if (value.length >= 20) return;
+  value += c;
+  render();
+  if (navigator.vibrate) navigator.vibrate(6);
+}
+
+del.addEventListener("click", () => { value = value.slice(0, -1); render(); });
+let hold;
+del.addEventListener("pointerdown", () => {
+  hold = setTimeout(() => { value = ""; render(); }, 600);
+});
+["pointerup","pointerleave","pointercancel"].forEach(e =>
+  del.addEventListener(e, () => clearTimeout(hold)));
+
+document.addEventListener("keydown", e => {
+  if (/^[0-9*#+]$/.test(e.key)) { add(e.key); }
+  else if (e.key === "Backspace") { value = value.slice(0, -1); render(); }
+  else if (e.key === "Escape") { closeMenu(); }
+});
+
+/* long-press the empty area above the keypad → Paste */
+let pressT = null;
+dialtop.addEventListener("pointerdown", e => {
+  pressT = setTimeout(() => openMenu(e.clientX, e.clientY), 480);
+});
+["pointerup","pointerleave","pointercancel","pointermove"].forEach(ev =>
+  dialtop.addEventListener(ev, () => clearTimeout(pressT)));
+
+function openMenu(x, y) {
+  const menu = $("menu"), r = $("device").getBoundingClientRect();
+  menu.classList.add("show");
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.max(8, Math.min(x - r.left - w / 2, r.width - w - 8)) + "px";
+  menu.style.top = Math.max(8, y - r.top + 10) + "px";
+  if (navigator.vibrate) navigator.vibrate(6);
+}
+function closeMenu() { $("menu").classList.remove("show"); }
+document.addEventListener("pointerdown", e => {
+  if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
+}, true);
+$("pasteBtn").addEventListener("click", async () => {
+  closeMenu();
+  let txt = "";
+  try { txt = await navigator.clipboard.readText(); } catch (err) { txt = "4155550142"; }
+  const clean = (txt || "").replace(/[^\d+*#]/g, "");
+  if (clean) { value = clean.slice(0, 20); render(); }
+});
+
+/* ---------------- views / tab bar ---------------- */
+const tabs = [...document.querySelectorAll(".tab")];
+const tabbar = $("tabbar"), pill = $("pill");
+const NAMES = ["favorites","recents","contacts","keypad","voicemail"];
+let cur = 3, drag = null;
+
+const mid = t => t.offsetLeft + t.offsetWidth / 2;
+const near = x => tabs.reduce((b, t, k) =>
+  Math.abs(mid(t) - x) < Math.abs(mid(tabs[b]) - x) ? k : b, 0);
+
+function mark(i) {
+  tabs.forEach((t, k) => {
+    t.classList.toggle("on", k === i);
+    t.setAttribute("aria-selected", k === i);
+  });
+}
+function snap() {
+  pill.classList.add("noanim");
+  pill.style.left = tabs[cur].offsetLeft + "px";
+  pill.style.width = tabs[cur].offsetWidth + "px";
+  void pill.offsetWidth;
+  pill.classList.remove("noanim");
+}
+function glide(i) {
+  const t = tabs[i], fl = pill.offsetLeft, fr = fl + pill.offsetWidth,
+        tl = t.offsetLeft, tr = tl + t.offsetWidth;
+  clearTimeout(glide.t);
+  if (Math.abs(fl - tl) < 2 && Math.abs(fr - tr) < 2) {
+    pill.style.left = tl + "px"; pill.style.width = t.offsetWidth + "px"; return;
+  }
+  const l = Math.min(fl, tl), r = Math.max(fr, tr);
+  pill.classList.add("noanim");
+  pill.style.left = l + "px"; pill.style.width = (r - l) + "px";
+  void pill.offsetWidth;
+  pill.classList.remove("noanim");
+  glide.t = setTimeout(() => {
+    pill.style.left = tl + "px"; pill.style.width = t.offsetWidth + "px";
+  }, 130);
+}
+function showView(i) {
+  mark(i);
+  if (i === cur) return;
+  const d = i > cur ? "goR" : "goL";
+  app.classList.remove("goR","goL");
+  app.dataset.view = NAMES[i];
+  void app.offsetWidth;
+  app.classList.add(d);
+  cur = i;
+  clearTimeout(showView.t);
+  showView.t = setTimeout(() => app.classList.remove(d), 340);
+}
+function go(i) { glide(i); showView(i); }
+
+tabs.forEach((t, k) => {
+  t.setAttribute("role","tab");
+  t.setAttribute("aria-selected", k === cur);
+  t.addEventListener("click", () => go(k));
+});
+
+/* press and drag the selection capsule, like iOS 26 */
+tabbar.addEventListener("pointerdown", e => {
+  tabbar.setPointerCapture(e.pointerId);
+  const x = e.clientX - tabbar.getBoundingClientRect().left, i = near(x);
+  drag = { x0: x, moved: false, dx: x - mid(tabs[i]) };
+  if (Math.abs(pill.offsetLeft + pill.offsetWidth / 2 - mid(tabs[i])) > 2) { glide(i); mark(i); }
+  pill.classList.add("grab");
+});
+tabbar.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const x = e.clientX - tabbar.getBoundingClientRect().left;
+  if (!drag.moved && Math.abs(x - drag.x0) < 5) return;
+  if (!drag.moved) {
+    drag.moved = true;
+    clearTimeout(glide.t);
+    pill.classList.add("noanim");
+    pill.style.width = tabs[0].offsetWidth + "px";
+    void pill.offsetWidth;
+    pill.classList.remove("noanim");
+  }
+  const w = pill.offsetWidth;
+  const min = tabs[0].offsetLeft;
+  const max = tabs[tabs.length - 1].offsetLeft + tabs[tabs.length - 1].offsetWidth - w;
+  const left = Math.max(min, Math.min(max, x - drag.dx - w / 2));
+  pill.style.left = left + "px";
+  mark(near(left + w / 2));
+});
+function release() {
+  if (!drag) return;
+  const i = drag.moved ? near(pill.offsetLeft + pill.offsetWidth / 2) : near(drag.x0);
+  drag = null;
+  pill.classList.remove("grab");
+  go(i);
+}
+tabbar.addEventListener("pointerup", release);
+tabbar.addEventListener("pointercancel", release);
+
+/* ---------------- list rendering ---------------- */
+$("favs").innerHTML = [0,3,4,6].map(i => {
+  const p = people[i];
+  return `<button class="fav" data-tel="${p.t}" data-name="${p.n}">${avHTML(p)}<b>${p.n.split(" ")[0]}</b><small>mobile</small></button>`;
+}).join("");
+
+function renderRecents(filter) {
+  const all = dialed
+    .map(d => ({ p:{ n:d.name, t:d.number, c:["#8e8e93","#636366"] }, when:d.when, kind:"out", label:"mobile" }))
+    .concat(recents.map(r => ({ p: people[r.i], when:r.when, kind:r.kind, label:r.label })));
+  const rows = all.filter(r => filter !== "missed" || r.kind === "missed");
+  $("recents").innerHTML = rows.map(r => {
+    const p = r.p;
+    return `<button class="row ${r.kind}" data-tel="${p.t}" data-name="${p.n}">
+      ${avHTML(p)}
+      <span class="t"><b>${p.n}</b><small>${r.label}</small></span>
+      <time>${r.when}</time>
+      <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
+    </button>`;
+  }).join("") || `<div style="padding:26px;text-align:center;color:var(--label2);font-size:15px">No Missed Calls</div>`;
+}
+renderRecents("all");
+
+const seg = $("seg"), segpill = $("segpill");
+function moveSeg(i) {
+  const b = seg.querySelectorAll("button")[i];
+  segpill.style.left = b.offsetLeft + "px";
+  segpill.style.width = b.offsetWidth + "px";
+  seg.querySelectorAll("button").forEach((x, k) => x.classList.toggle("on", k === i));
+}
+seg.querySelectorAll("button").forEach((b, i) => {
+  b.addEventListener("click", () => { moveSeg(i); renderRecents(i ? "missed" : "all"); });
+});
+
+function renderContacts(q) {
+  const list = people
+    .filter(p => !q || p.n.toLowerCase().includes(q.toLowerCase()) || p.t.includes(q))
+    .sort((a, b) => a.n.localeCompare(b.n));
+  let out = "", last = "";
+  list.forEach(p => {
+    const L = p.n[0].toUpperCase();
+    if (L !== last) { out += `<div class="sec">${L}</div>`; last = L; }
+    out += `<button class="row" data-tel="${p.t}" data-name="${p.n}">
+      ${avHTML(p)}
+      <span class="t"><b>${p.n}</b><small>${fmt(p.t)}</small></span>
+    </button>`;
+  });
+  $("contacts").innerHTML = out;
+}
+renderContacts("");
+$("q").addEventListener("input", e => renderContacts(e.target.value));
+
+$("voicemail").innerHTML = voicemails.map(v => {
+  const p = people[v.i];
+  return `<button class="row vm" data-tel="${p.t}" data-name="${p.n}">
+    <span class="play"><svg viewBox="0 0 24 24"><path d="M8 5.6 19 12 8 18.4z"/></svg></span>
+    <span class="t"><b>${p.n}</b><small>${v.text}</small></span>
+    <time>${v.when}</time>
+    ${v.new ? `<span class="dot"></span>` : ""}
+  </button>`;
+}).join("");
+
+/* tapping a person starts a call, exactly like the real app */
+document.addEventListener("click", e => {
+  const row = e.target.closest("[data-tel]");
+  if (!row) return;
+  if (e.target.closest(".info")) return;
+  placeCall(row.dataset.tel, row.dataset.name);
+});
+matchEl.addEventListener("click", () => {
+  const m = findMatch();
+  if (m) placeCall(m.t, m.n);
+});
+
+/* ---------------- placing a real call ---------------- */
+const MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
+
+function stamp() {
+  const d = new Date();
+  return (d.getHours() % 12 || 12) + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function placeCall(number, name) {
+  const raw = String(number == null ? "" : number);
+  const d = raw.replace(/[^\d+*#]/g, "");
+  if (!d) return;
+  dialed.unshift({ number: d, name: name || fmt(raw), when: stamp() });
+  dialed = dialed.slice(0, 40);
+  try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
+  renderRecents(seg.querySelectorAll("button")[1].classList.contains("on") ? "missed" : "all");
+  if (navigator.vibrate) navigator.vibrate(8);
+  if (MOBILE) {
+    window.location.href = "tel:" + d;          // hands off to the real Phone app
+  } else {
+    startCall(d, { n: name || fmt(raw) });      // desktop: show the in-app call screen
+  }
+}
+
+/* ---------------- call screen ---------------- */
+const device = $("device"), cs = $("callscreen"), csName = $("csName"), csStatus = $("csStatus");
+let callTimer = null, callSecs = 0;
+
+function startCall(number, person) {
+  if (number.replace(/\D/g,"") === "" && !person) return;
+  csName.textContent = person ? person.n : fmt(number);
+  csStatus.textContent = "calling…";
+  cs.classList.add("show");
+  device.classList.add("calling");
+  cs.setAttribute("aria-hidden","false");
+  clearInterval(callTimer);
+  callSecs = 0;
+  setTimeout(() => {
+    if (!cs.classList.contains("show")) return;
+    callTimer = setInterval(() => {
+      callSecs++;
+      csStatus.textContent = String(Math.floor(callSecs / 60)).padStart(2,"0") + ":" +
+                             String(callSecs % 60).padStart(2,"0");
+    }, 1000);
+  }, 2600);
+  if (navigator.vibrate) navigator.vibrate(10);
+}
+function endCall() {
+  clearInterval(callTimer);
+  cs.classList.remove("show");
+  device.classList.remove("calling");
+  cs.setAttribute("aria-hidden","true");
+}
+$("csEnd").addEventListener("click", endCall);
+document.querySelectorAll(".cs-btn").forEach(b =>
+  b.addEventListener("click", () => b.classList.toggle("on")));
+$("call").addEventListener("click", () => {
+  if (!value) return;
+  const m = findMatch();
+  placeCall(value, m ? m.n : fmt(value));
+});
+
+/* ---------------- clock ---------------- */
+function tick() {
+  const d = new Date();
+  let h = d.getHours(), m = String(d.getMinutes()).padStart(2, "0");
+  h = h % 12 || 12;
+  $("clock").textContent = h + ":" + m;
+}
+tick();
+setInterval(tick, 15000);
+
+/* ---------------- install / offline ---------------- */
+if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+  addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+
+(function installTip() {
+  const card = $("install"), btn = $("installBtn"), x = $("installX");
+  if (!card) return;
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  let off = false;
+  try { off = localStorage.getItem("phone.installTip") === "off"; } catch (e) {}
+  if (standalone || off || location.protocol === "file:") return;
+  let prompt = null;
+  addEventListener("beforeinstallprompt", e => { e.preventDefault(); prompt = e; btn.hidden = false; });
+  if (ios) {
+    $("installText").innerHTML = "Tap <b>Share</b> then <b>Add to Home Screen</b> to keep Phone on your home screen.";
+  }
+  card.classList.add("show");
+  x.addEventListener("click", () => {
+    card.classList.remove("show");
+    try { localStorage.setItem("phone.installTip", "off"); } catch (e) {}
+  });
+  btn.addEventListener("click", async () => {
+    if (!prompt) return;
+    prompt.prompt();
+    await prompt.userChoice;
+    card.classList.remove("show");
+  });
+})();
+
+/* ---------------- boot ---------------- */
+snap();
+render();
+addEventListener("resize", () => { snap(); fitNumber(); moveSeg(seg.querySelector("button.on") ? [...seg.querySelectorAll("button")].findIndex(b => b.classList.contains("on")) : 0); });
+if (document.fonts) document.fonts.ready.then(() => { snap(); fitNumber(); moveSeg(0); });
+moveSeg(0);
+</script>
+</body>
+</html>
