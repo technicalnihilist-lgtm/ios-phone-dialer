@@ -29,7 +29,7 @@ A pixel-faithful reproduction of the iOS Phone app, shipped three ways from one 
 
 **Android (APK)** — download [`apk/Phone-Dialer.apk`](apk/Phone-Dialer.apk), open it on the phone, and allow install from unknown sources when prompted. Android 7.0+ (API 24).
 
-**iPhone / Android (web app)** — open the GitHub Pages link for this repo in Safari or Chrome, then *Share → Add to Home Screen*. It launches full screen with its own icon and works offline.
+**iPhone / Android (web app)** — open <https://technicalnihilist-lgtm.github.io/ios-phone-dialer/> in Safari or Chrome, then *Share → Add to Home Screen*. It launches full screen with its own icon and works offline.
 
 **Desktop** — just open `index.html`.
 
