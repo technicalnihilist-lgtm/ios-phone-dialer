@@ -482,6 +482,8 @@ button{font-family:inherit;color:inherit}
 .app::before{opacity:var(--g-glow)}
 @media (prefers-color-scheme:light){.app::before{opacity:calc(var(--g-glow)*.55)}}
 
+#v-keypad .keypad-tools{width:100%;flex:none;display:flex;justify-content:flex-end;padding:0 2px 12px;margin-top:auto}
+#v-keypad .pad{margin-top:0}
 .gear{
   width:34px;height:34px;border:0;border-radius:50%;background:var(--fill);color:var(--label);
   display:grid;place-items:center;cursor:pointer;
@@ -534,7 +536,6 @@ button{font-family:inherit;color:inherit}
 
   <div class="statusbar">
     <span class="time" id="clock">9:41</span>
-    <button class="gear" id="gear" aria-label="Liquid Glass settings"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg></button>
   </div>
 
   <main class="app" id="app" data-view="keypad">
@@ -545,6 +546,9 @@ button{font-family:inherit;color:inherit}
         <div class="number" id="num" aria-live="polite"></div>
         <button class="match" id="match"><span class="av" id="matchAv"></span><span class="mn" id="matchName"></span></button>
         <button class="addnum" id="addnum">Add Number</button>
+      </div>
+      <div class="keypad-tools">
+        <button class="gear" id="gear" aria-label="Liquid Glass settings"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg></button>
       </div>
       <div class="pad" id="pad"></div>
       <div class="callrow">

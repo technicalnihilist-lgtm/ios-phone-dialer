@@ -83,7 +83,7 @@ manifest.webmanifest     PWA manifest
 sw.js                    service worker (offline cache)
 icons/                   app icons (180 / 192 / 512)
 screenshots/             rendered from index.html
-apk/Phone-Dialer.apk     signed, installable build (v2.2)
+apk/Phone-Dialer.apk     signed, installable build (v2.3)
 android/                 native app source
   AndroidManifest.xml    permissions, dialer role, InCallService
   src/com/phone/dialer/
@@ -109,7 +109,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.2 (versionCode 5) |
+| Version | 2.3 (versionCode 6) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |
