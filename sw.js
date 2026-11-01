@@ -42,7 +42,10 @@ self.addEventListener("fetch", e => {
        serving the first index.html this device ever saw */
     e.respondWith(
       fetch(req).then(store)
-        .catch(() => caches.match(req).then(hit => hit || caches.match("./index.html")))
+        .catch(() => caches.match(req).then(hit => hit || caches.match("./index.html"))
+          /* with nothing cached this resolved to undefined, which respondWith()
+             rejects with a TypeError instead of showing an offline page */
+          .then(hit => hit || Response.error()))
     );
     return;
   }

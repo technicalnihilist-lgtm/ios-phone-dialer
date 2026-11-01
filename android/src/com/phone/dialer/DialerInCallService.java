@@ -35,18 +35,24 @@ public class DialerInCallService extends InCallService {
         current = null;          /* was left pointing at a dead Call after the service died */
     }
 
+    /** The dialled number behind a Call, or "" when the handle is not readable. */
+    private static String numberOf(Call call) {
+        String number = "";
+        try {
+            if (call != null && call.getDetails() != null && call.getDetails().getHandle() != null) {
+                number = call.getDetails().getHandle().getSchemeSpecificPart();
+            }
+        } catch (Exception ignored) { }
+        return number == null ? "" : number;
+    }
+
     @Override
     public void onCallAdded(Call call) {
         super.onCallAdded(call);
         live.add(call);
         current = call;
 
-        String number = "";
-        try {
-            if (call.getDetails() != null && call.getDetails().getHandle() != null) {
-                number = call.getDetails().getHandle().getSchemeSpecificPart();
-            }
-        } catch (Exception ignored) { }
+        String number = numberOf(call);
 
         Intent i = new Intent(this, CallActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
@@ -66,6 +72,9 @@ public class DialerInCallService extends InCallService {
             /* with a second call still up, the in-call screen belongs to that
                one now — it used to be closed as if every call had ended */
             current = live.isEmpty() ? null : live.iterator().next();
+            /* the screen was never told: after the second call hung up the header
+               still showed the caller that had just gone, not the one still up */
+            if (current != null) CallActivity.showIfOpen(numberOf(current));
         }
         if (live.isEmpty()) CallActivity.finishIfOpen();
     }

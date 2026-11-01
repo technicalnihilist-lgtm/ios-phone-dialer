@@ -43,6 +43,17 @@ public class CallActivity extends Activity {
     /** Number currently painted in the call header, so a repeated intent does not reset the timer. */
     private String shownNumber = "";
 
+    /**
+     * One background thread for contact lookups. The lookup used to run on the
+     * UI thread from onCreate() and onNewIntent(), so a slow or large contacts
+     * provider stalled the in-call screen while it was being opened.
+     */
+    private static final java.util.concurrent.ExecutorService LOOKUPS =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /** Guards against an out-of-order lookup painting the previous caller's name. */
+    private int lookupSeq;
+
     private final Handler ticker = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override
@@ -51,6 +62,33 @@ public class CallActivity extends Activity {
             ticker.postDelayed(this, 500);
         }
     };
+
+    /**
+     * A single pending DTMF stop. Each key used to post its own stop 160 ms
+     * later, so pressing two keys quickly had the first key's stop cut the
+     * second tone off almost immediately.
+     */
+    private final Runnable stopTone = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                Call call = DialerInCallService.current;
+                if (call != null) call.stopDtmfTone();
+            } catch (Exception ignored) { }
+        }
+    };
+
+    /** Repaints the header when the call on screen changes without a new intent. */
+    public static void showIfOpen(final String number) {
+        final CallActivity a = open;
+        if (a == null) return;
+        a.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try { a.showCaller(number); } catch (Exception ignored) { }
+            }
+        });
+    }
 
     public static void finishIfOpen() {
         if (open != null) {
@@ -135,17 +173,54 @@ public class CallActivity extends Activity {
                 });
             }
         }
+    }
 
+    /**
+     * The 500 ms status ticker kept waking the main thread for as long as the
+     * activity existed, including while it sat stopped behind the home screen
+     * or another app. It only has a reason to run while the screen is visible.
+     */
+    @Override
+    protected void onStart() {
+        super.onStart();
+        ticker.removeCallbacks(tick);
         ticker.post(tick);
+    }
+
+    @Override
+    protected void onStop() {
+        ticker.removeCallbacks(tick);
+        super.onStop();
     }
 
     /** Paints the caller for a number; the lookup runs only when the number actually changed. */
     private void showCaller(String number) {
-        String n = number == null ? "" : number;
+        final String n = number == null ? "" : number;
         if (n.equals(shownNumber)) return;
         shownNumber = n;
-        String looked = lookupName(n);
-        nameView.setText(looked != null ? looked : n);
+        final int seq = ++lookupSeq;
+        if (n.isEmpty()) {
+            nameView.setText("");
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            /* no contacts access: the number is all there is, paint it straight away */
+            nameView.setText(n);
+            return;
+        }
+        LOOKUPS.execute(new Runnable() {
+            @Override
+            public void run() {
+                final String looked = lookupName(n);
+                ticker.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (seq != lookupSeq || !n.equals(shownNumber)) return;
+                        nameView.setText(looked != null ? looked : n);
+                    }
+                });
+            }
+        });
     }
 
     /**
@@ -222,12 +297,9 @@ public class CallActivity extends Activity {
         Call call = DialerInCallService.current;
         if (call == null) return;
         try {
+            ticker.removeCallbacks(stopTone);
             call.playDtmfTone(c);
-            ticker.postDelayed(new Runnable() {
-                public void run() {
-                    try { call.stopDtmfTone(); } catch (Exception ignored) { }
-                }
-            }, 160);
+            ticker.postDelayed(stopTone, 160);
         } catch (Exception ignored) { }
     }
 
@@ -368,6 +440,7 @@ public class CallActivity extends Activity {
     @Override
     protected void onDestroy() {
         ticker.removeCallbacks(tick);
+        ticker.removeCallbacks(stopTone);
         stopRecordingIfAny();
         if (open == this) open = null;
         super.onDestroy();

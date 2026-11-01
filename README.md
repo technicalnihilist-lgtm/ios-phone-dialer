@@ -109,7 +109,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.4.1 (versionCode 8) |
+| Version | 2.4.2 (versionCode 9) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |

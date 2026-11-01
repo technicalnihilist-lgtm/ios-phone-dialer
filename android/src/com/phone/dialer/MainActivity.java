@@ -122,7 +122,17 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
-        if (code == REQ_PERMS && web != null) web.reload();
+        if (code != REQ_PERMS || web == null) return;
+        /* the page was reloaded after every permission dialog, throwing away the
+           number that had already been typed even when nothing was granted;
+           only reload when there is actually new data to read */
+        boolean gained = false;
+        if (results != null) {
+            for (int i = 0; i < results.length; i++) {
+                if (results[i] == PackageManager.PERMISSION_GRANTED) { gained = true; break; }
+            }
+        }
+        if (gained) web.reload();
     }
 
     /**

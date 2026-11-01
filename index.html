@@ -727,16 +727,35 @@ function t9Of(p) {
   return d;
 }
 
+/* the lower-cased name and the number string never change either, and both were
+   rebuilt for every contact on every keystroke; cache them per contact object */
+const lowCache = new WeakMap(), telCache = new WeakMap();
+function lowerOf(p) {
+  let s = lowCache.get(p);
+  if (s === undefined) {
+    s = String(p.n == null ? "" : p.n).toLowerCase();
+    lowCache.set(p, s);
+  }
+  return s;
+}
+function telOf(p) {
+  let s = telCache.get(p);
+  if (s === undefined) {
+    s = String(p.t || "");
+    telCache.set(p, s);
+  }
+  return s;
+}
+
 function findMatch() {
   const d = value.replace(/\D/g, "");
   if (d.length < 3) return null;
   const lv = value.toLowerCase();
   return people.find(p => {
     if (!p) return false;
-    const nm = String(p.n == null ? "" : p.n);
-    return String(p.t || "").startsWith(d) ||
+    return telOf(p).startsWith(d) ||
       t9Of(p).startsWith(d) ||
-      nm.toLowerCase().startsWith(lv);
+      lowerOf(p).startsWith(lv);
   }) || null;
 }
 
@@ -844,8 +863,13 @@ const NAMES = ["favorites","recents","contacts","keypad","voicemail"];
 let cur = 3, drag = null;
 
 const mid = t => t.offsetLeft + t.offsetWidth / 2;
-const near = x => tabs.reduce((b, t, k) =>
-  Math.abs(mid(t) - x) < Math.abs(mid(tabs[b]) - x) ? k : b, 0);
+/* reading offsetLeft/offsetWidth for all five tabs on every pointermove forced a
+   synchronous layout on every frame of the capsule drag; measure once and
+   re-measure only when the layout can actually have changed */
+let tabMids = null;
+const mids = () => tabMids || (tabMids = tabs.map(mid));
+const near = x => { const m = mids(); return m.reduce((b, v, k) =>
+  Math.abs(v - x) < Math.abs(m[b] - x) ? k : b, 0); };
 
 function mark(i) {
   tabs.forEach((t, k) => {
@@ -904,8 +928,8 @@ tabs.forEach((t, k) => {
 tabbar.addEventListener("pointerdown", e => {
   tabbar.setPointerCapture(e.pointerId);
   const x = e.clientX - tabbar.getBoundingClientRect().left, i = near(x);
-  drag = { x0: x, moved: false, dx: x - mid(tabs[i]) };
-  if (Math.abs(pill.offsetLeft + pill.offsetWidth / 2 - mid(tabs[i])) > 2) { glide(i); mark(i); }
+  drag = { x0: x, moved: false, dx: x - mids()[i] };
+  if (Math.abs(pill.offsetLeft + pill.offsetWidth / 2 - mids()[i]) > 2) { glide(i); mark(i); }
   pill.classList.add("grab");
 });
 tabbar.addEventListener("pointermove", e => {
@@ -1219,12 +1243,19 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 
   /* a slider drag fires 'input' on every frame; writing localStorage on each
      one meant ~60 synchronous JSON writes a second while dragging */
-  let saveT = null;
+  let saveT = null, slideQueued = false;
   function flush() {
     clearTimeout(saveT);
     saveT = null;
     try { localStorage.setItem("phone.glass", JSON.stringify(G)); } catch (e) {}
   }
+  /* the 250 ms save timer was lost when the page was closed or backgrounded
+     right after a drag, so the last slider position was never written */
+  function flushIfPending() { if (saveT !== null) flush(); }
+  addEventListener("pagehide", flushIfPending);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) flushIfPending();
+  });
 
   function apply(save) {
     const r = document.documentElement.style;
@@ -1251,7 +1282,15 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     rows.appendChild(row);
     const el = row.querySelector("input"), out = row.querySelector("output");
     ins[k] = { el, out };
-    el.addEventListener("input", () => { G[k] = +el.value; apply(true); });
+    /* a drag fires 'input' more than once per frame and every one of them
+       repainted the glass; coalesce to one repaint per frame, as the contacts
+       search box already does */
+    el.addEventListener("input", () => {
+      G[k] = +el.value;
+      if (slideQueued) return;
+      slideQueued = true;
+      requestAnimationFrame(() => { slideQueued = false; apply(true); });
+    });
   });
   document.querySelectorAll(".gs-pre button").forEach(b =>
     b.addEventListener("click", () => { G = Object.assign({}, PRE[b.dataset.p]); apply(true); }));
@@ -1302,6 +1341,7 @@ let remeasure = false;
 function remeasureLayout() {
   if (remeasure) return;
   remeasure = true;
+  tabMids = null;   /* the tab centres are about to move: drop the cached ones */
   requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
 }
 addEventListener("resize", remeasureLayout);
