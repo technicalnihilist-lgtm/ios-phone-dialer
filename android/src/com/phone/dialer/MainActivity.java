@@ -15,6 +15,8 @@ import android.provider.CallLog;
 import android.provider.ContactsContract;
 import android.telecom.TelecomManager;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
@@ -120,7 +122,47 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
-        if (code == REQ_PERMS) web.reload();
+        if (code == REQ_PERMS && web != null) web.reload();
+    }
+
+    /**
+     * The WebView was never paused or torn down. While the app sat in the
+     * background its page timers kept firing and its renderer kept a graphics
+     * context alive; on every destroy the WebView, its renderer and the
+     * JavaScript bridge (which holds this Activity) were leaked.
+     */
+    @Override
+    protected void onPause() {
+        if (web != null) {
+            web.onPause();
+            web.pauseTimers();
+        }
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (web != null) {
+            web.resumeTimers();
+            web.onResume();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (web != null) {
+            try {
+                web.stopLoading();
+                web.removeJavascriptInterface("PhoneNative");
+                web.setWebViewClient(null);
+                ViewParent parent = web.getParent();
+                if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(web);
+                web.destroy();
+            } catch (Exception ignored) { }
+            web = null;
+        }
+        super.onDestroy();
     }
 
     /** tel:/sms:/mailto: links leave the app for the system dialer. */
@@ -245,7 +287,9 @@ public class MainActivity extends Activity {
                 public void run() {
                     String clean = number == null ? "" : number.trim();
                     if (clean.isEmpty()) return;
-                    Uri uri = Uri.fromParts("tel", clean, null);
+                    /* Uri.fromParts() left a '#' in the number as a URI fragment,
+                       so *123# and *#06# were handed to telecom truncated at the '#'. */
+                    Uri uri = Uri.parse("tel:" + Uri.encode(clean, "+*"));
                     boolean canCall = checkSelfPermission(Manifest.permission.CALL_PHONE)
                             == PackageManager.PERMISSION_GRANTED;
                     Intent i = new Intent(canCall ? Intent.ACTION_CALL : Intent.ACTION_DIAL, uri);

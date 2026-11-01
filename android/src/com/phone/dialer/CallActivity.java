@@ -3,6 +3,7 @@ package com.phone.dialer;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.AudioManager;
@@ -39,6 +40,8 @@ public class CallActivity extends Activity {
     private boolean onHold;
     private long startedAt;
     private boolean answered;
+    /** Number currently painted in the call header, so a repeated intent does not reset the timer. */
+    private String shownNumber = "";
 
     private final Handler ticker = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -87,11 +90,10 @@ public class CallActivity extends Activity {
         recordLabel = findViewById(R.id.lbl_record);
 
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        /* volume keys adjusted the media stream during a call, not the call stream */
+        setVolumeControlStream(AudioManager.STREAM_VOICE_CALL);
 
-        String number = getIntent() == null ? "" : getIntent().getStringExtra("number");
-        if (number == null) number = "";
-        String looked = lookupName(number);          /* was queried twice, on the UI thread */
-        nameView.setText(looked != null ? looked : number);
+        showCaller(getIntent() == null ? "" : getIntent().getStringExtra("number"));
 
         muteBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
@@ -137,6 +139,37 @@ public class CallActivity extends Activity {
         ticker.post(tick);
     }
 
+    /** Paints the caller for a number; the lookup runs only when the number actually changed. */
+    private void showCaller(String number) {
+        String n = number == null ? "" : number;
+        if (n.equals(shownNumber)) return;
+        shownNumber = n;
+        String looked = lookupName(n);
+        nameView.setText(looked != null ? looked : n);
+    }
+
+    /**
+     * A second call arrives as a new intent on this singleTop activity, but the
+     * activity ignored it: the header kept the previous caller's name and the
+     * duration carried on counting from the previous call.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String number = intent == null ? null : intent.getStringExtra("number");
+        if (number != null && number.equals(shownNumber)) return;
+
+        answered = false;
+        startedAt = 0;
+        onHold = false;
+        muted = false;
+        if (holdBtn != null) { holdBtn.setSelected(false); holdLabel.setText("hold"); }
+        if (muteBtn != null) { muteBtn.setSelected(false); muteLabel.setText("mute"); }
+        if (statusView != null) setTextIfChanged(statusView, "connecting…");
+        showCaller(number);
+    }
+
     /* ---------------- call controls ---------------- */
 
     private void toggleMute() {
@@ -177,12 +210,20 @@ public class CallActivity extends Activity {
         holdLabel.setText(onHold ? "resume" : "hold");
     }
 
+    /** TextView.setText() always requests layout, even for the same string. */
+    private static void setTextIfChanged(TextView v, CharSequence s) {
+        if (v == null || s == null) return;
+        CharSequence cur = v.getText();
+        if (cur != null && s.toString().contentEquals(cur)) return;
+        v.setText(s);
+    }
+
     private void playTone(char c) {
         Call call = DialerInCallService.current;
         if (call == null) return;
         try {
             call.playDtmfTone(c);
-            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            ticker.postDelayed(new Runnable() {
                 public void run() {
                     try { call.stopDtmfTone(); } catch (Exception ignored) { }
                 }
@@ -272,10 +313,10 @@ public class CallActivity extends Activity {
         }
         switch (state) {
             case Call.STATE_RINGING:
-                statusView.setText("incoming call");
+                setTextIfChanged(statusView, "incoming call");
                 break;
             case Call.STATE_DIALING:
-                statusView.setText("calling…");
+                setTextIfChanged(statusView, "calling…");
                 break;
             case Call.STATE_ACTIVE:
                 if (!answered) {
@@ -283,24 +324,24 @@ public class CallActivity extends Activity {
                     startedAt = System.currentTimeMillis();
                 }
                 long secs = Math.max(0, (System.currentTimeMillis() - startedAt) / 1000);
-                statusView.setText(String.format(Locale.US, "%02d:%02d", secs / 60, secs % 60));
+                setTextIfChanged(statusView, String.format(Locale.US, "%02d:%02d", secs / 60, secs % 60));
                 break;
             case Call.STATE_HOLDING:
-                statusView.setText("on hold");
+                setTextIfChanged(statusView, "on hold");
                 break;
             case Call.STATE_DISCONNECTED:
                 stopRecordingIfAny();
                 finish();
                 break;
             default:
-                statusView.setText("connecting…");
+                setTextIfChanged(statusView, "connecting…");
                 break;
         }
         try {
             if (audio != null) {
                 boolean sp = audio.isSpeakerphoneOn();
                 speakerBtn.setSelected(sp);
-                speakerLabel.setText(sp ? "speaker on" : "speaker");
+                setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
             }
         } catch (Exception ignored) { }
     }

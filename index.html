@@ -715,14 +715,29 @@ const toDigits = s => s.toLowerCase().split("").map(ch => {
   return "";
 }).join("");
 
+/* the T9 digits of a name never change, but they were rebuilt for every
+   contact on every keystroke; cache them per contact object instead */
+const t9Cache = new WeakMap();
+function t9Of(p) {
+  let d = t9Cache.get(p);
+  if (d === undefined) {
+    d = toDigits(String(p.n == null ? "" : p.n));
+    t9Cache.set(p, d);
+  }
+  return d;
+}
+
 function findMatch() {
   const d = value.replace(/\D/g, "");
   if (d.length < 3) return null;
-  return people.find(p =>
-    p.t.startsWith(d) ||
-    toDigits(p.n).startsWith(d) ||
-    p.n.toLowerCase().startsWith(value.toLowerCase())
-  ) || null;
+  const lv = value.toLowerCase();
+  return people.find(p => {
+    if (!p) return false;
+    const nm = String(p.n == null ? "" : p.n);
+    return String(p.t || "").startsWith(d) ||
+      t9Of(p).startsWith(d) ||
+      nm.toLowerCase().startsWith(lv);
+  }) || null;
 }
 
 function fitNumber() {
@@ -1084,7 +1099,9 @@ function startCall(number, person) {
   startCall.t = setTimeout(() => {
     if (!cs.classList.contains("show")) return;
     callStartedAt = Date.now();
-    startCallTimer();
+    /* a call placed just before the app was backgrounded used to start the
+       1 Hz timer while hidden; visibilitychange restarts it on return */
+    if (!document.hidden) startCallTimer();
   }, 2600);
   if (navigator.vibrate) navigator.vibrate(10);
 }
@@ -1200,6 +1217,15 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   try { Object.assign(G, JSON.parse(localStorage.getItem("phone.glass") || "{}")); } catch (e) {}
   const sheet = $("gsheet"), gear = $("gear"), rows = $("gsRows"), ins = {};
 
+  /* a slider drag fires 'input' on every frame; writing localStorage on each
+     one meant ~60 synchronous JSON writes a second while dragging */
+  let saveT = null;
+  function flush() {
+    clearTimeout(saveT);
+    saveT = null;
+    try { localStorage.setItem("phone.glass", JSON.stringify(G)); } catch (e) {}
+  }
+
   function apply(save) {
     const r = document.documentElement.style;
     r.setProperty("--g-a", (0.8 * (1 - G.v / 100)).toFixed(3));
@@ -1213,7 +1239,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
       i.el.style.setProperty("--p", ((G[k] - lo) / (hi - lo) * 100) + "%");
       i.out.textContent = G[k] + u;
     });
-    if (save) { try { localStorage.setItem("phone.glass", JSON.stringify(G)); } catch (e) {} }
+    if (save) {
+      clearTimeout(saveT);
+      saveT = setTimeout(flush, 250);
+    }
   }
   FIELDS.forEach(([k, name, lo, hi, step]) => {
     const row = document.createElement("div");
@@ -1228,17 +1257,23 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     b.addEventListener("click", () => { G = Object.assign({}, PRE[b.dataset.p]); apply(true); }));
 
   function open(on) {
+    const was = sheet.classList.contains("show");
+    if (!on && was) flush();          /* closing commits the last slider value now */
     sheet.classList.toggle("show", on);
     gear.classList.toggle("on", on);
     sheet.setAttribute("aria-hidden", String(!on));
-    if (navigator.vibrate) navigator.vibrate(6);
+    if (navigator.vibrate && on !== was) navigator.vibrate(6);
   }
   gear.addEventListener("click", () => open(!sheet.classList.contains("show")));
   $("gsDone").addEventListener("click", () => open(false));
   document.addEventListener("pointerdown", e => {
     if (sheet.classList.contains("show") && !e.target.closest("#gsheet") && !e.target.closest("#gear") && !e.target.closest("#tabbar")) open(false);
   }, true);
-  document.addEventListener("keydown", e => { if (e.key === "Escape") open(false); });
+  /* Escape used to call open(false) unconditionally, so every Escape press
+     buzzed the phone even with the sheet already closed */
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && sheet.classList.contains("show")) open(false);
+  });
   apply(false);
 })();
 
