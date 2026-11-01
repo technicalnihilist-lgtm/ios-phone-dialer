@@ -8,6 +8,7 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.AudioManager;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -59,7 +60,14 @@ public class CallActivity extends Activity {
         @Override
         public void run() {
             refreshStatus();
-            ticker.postDelayed(this, 500);
+            /* Every pass makes two binder calls, one into telecom and one into the
+               audio service. Only a call that is still connecting needs a fast
+               poll; once it is up and counting, one pass per second is enough.
+               The delay is lined up with the second boundary so the counter
+               never skips a value the way a plain 1000 ms poll would. */
+            long delay = 500;
+            if (answered) delay = 1000 - (System.currentTimeMillis() % 1000) + 5;
+            ticker.postDelayed(this, delay);
         }
     };
 
@@ -96,7 +104,7 @@ public class CallActivity extends Activity {
                 @Override
                 public void run() {
                     try {
-                        open.stopRecordingIfAny();
+                        open.releaseRecorderOffThread();
                         open.finish();
                     } catch (Exception ignored) { }
                 }
@@ -311,7 +319,7 @@ public class CallActivity extends Activity {
         try {
             if (call != null) call.disconnect();
         } catch (Exception ignored) { }
-        stopRecordingIfAny();
+        releaseRecorderOffThread();
         finish();
     }
 
@@ -377,10 +385,34 @@ public class CallActivity extends Activity {
             recorder = null;
         }
         recording = false;
-        if (recordBtn != null) {
-            recordBtn.setSelected(false);
-            recordLabel.setText("record");
-        }
+        resetRecordButton();
+    }
+
+    /**
+     * The same teardown for the paths that end the call: onDestroy(), a hang-up
+     * and a remote disconnect. stop() finalises the MP4 and release() tears the
+     * encoder down, and both block for tens of milliseconds on the calling
+     * thread, so they are handed to the background executor instead. No new
+     * recording can start from those paths, so nothing races the release.
+     */
+    private void releaseRecorderOffThread() {
+        final MediaRecorder r = recorder;
+        recorder = null;
+        recording = false;
+        resetRecordButton();
+        if (r == null) return;
+        LOOKUPS.execute(new Runnable() {
+            @Override
+            public void run() {
+                try { r.stop(); } catch (Exception ignored) { }
+                try { r.release(); } catch (Exception ignored) { }
+            }
+        });
+    }
+
+    private void resetRecordButton() {
+        if (recordBtn != null) recordBtn.setSelected(false);
+        if (recordLabel != null) recordLabel.setText("record");
     }
 
     /* ---------------- state ---------------- */
@@ -410,7 +442,7 @@ public class CallActivity extends Activity {
             case Call.STATE_ACTIVE:
                 if (!answered) {
                     answered = true;
-                    startedAt = System.currentTimeMillis();
+                    startedAt = connectTimeOf(call);
                 }
                 long secs = Math.max(0, (System.currentTimeMillis() - startedAt) / 1000);
                 setTextIfChanged(statusView, String.format(Locale.US, "%02d:%02d", secs / 60, secs % 60));
@@ -419,7 +451,7 @@ public class CallActivity extends Activity {
                 setTextIfChanged(statusView, "on hold");
                 break;
             case Call.STATE_DISCONNECTED:
-                stopRecordingIfAny();
+                releaseRecorderOffThread();
                 finish();
                 break;
             default:
@@ -433,6 +465,22 @@ public class CallActivity extends Activity {
                 setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
             }
         } catch (Exception ignored) { }
+    }
+
+    /**
+     * When the call actually connected. This screen is often created mid-call —
+     * the screen was off, or the activity was recreated — and starting the clock
+     * at "now" in those cases showed 00:00 over a call that had been running for
+     * minutes. Falls back to now when telecom does not know (API 24).
+     */
+    private static long connectTimeOf(Call call) {
+        try {
+            if (Build.VERSION.SDK_INT >= 25 && call.getDetails() != null) {
+                long t = call.getDetails().getConnectTimeMillis();
+                if (t > 0) return t;
+            }
+        } catch (Exception ignored) { }
+        return System.currentTimeMillis();
     }
 
     private String lookupName(String number) {
@@ -459,7 +507,7 @@ public class CallActivity extends Activity {
         lookupSeq++;             /* a lookup still in flight must not paint into a dead screen */
         ticker.removeCallbacks(tick);
         ticker.removeCallbacks(stopTone);
-        stopRecordingIfAny();
+        releaseRecorderOffThread();
         if (open == this) open = null;
         super.onDestroy();
     }

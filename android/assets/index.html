@@ -359,7 +359,6 @@ button{font-family:inherit;color:inherit}
   font-size:16px;color:var(--label);cursor:pointer;
 }
 .menu button:active{background:var(--fill)}
-@keyframes menuIn{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:scale(1)}}
 
 @keyframes inR{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
 @keyframes inL{from{opacity:0;transform:translateX(-26px)}to{opacity:1;transform:none}}
@@ -691,11 +690,19 @@ KEYS.forEach(([d, l], n) => {
   b.dataset.d = d; b.style.setProperty("--n", n);
   b.setAttribute("aria-label", d);
   b.innerHTML = `<b>${d}</b><small>${l}</small>`;
-  b.addEventListener("click", () => { if (b._lp) { b._lp = false; return; } add(d); });
+  /* the long-press flag was a latch: if the finger slid off the key before
+     release no click arrived to clear it, and the next tap on the same key was
+     swallowed. Record when the long press fired and expire it instead. */
+  b.addEventListener("click", () => {
+    const t = b._lpt;
+    b._lpt = 0;
+    if (t && Date.now() - t < 800) return;
+    add(d);
+  });
   if (d === "0") {
     let t;
     b.addEventListener("pointerdown", () => {
-      b._lp = false; t = setTimeout(() => { b._lp = true; add("+"); }, 500);
+      b._lpt = 0; t = setTimeout(() => { b._lpt = Date.now(); add("+"); }, 500);
     });
     ["pointerup","pointerleave","pointercancel"].forEach(e =>
       b.addEventListener(e, () => clearTimeout(t)));
@@ -741,10 +748,14 @@ function lowerOf(p) {
   }
   return s;
 }
+/* device contacts carry the number exactly as it was saved — "(555) 123-4567",
+   "+91 98765 43210" — and comparing that raw string against the digits on the
+   keypad meant a typed number almost never matched the contact it belonged to.
+   Cache the dial digits; findMatch() is the only reader. */
 function telOf(p) {
   let s = telCache.get(p);
   if (s === undefined) {
-    s = String(p.t || "");
+    s = String(p.t == null ? "" : p.t).replace(/[^0-9]/g, "");
     telCache.set(p, s);
   }
   return s;
@@ -756,15 +767,24 @@ function findMatch() {
   const lv = value.toLowerCase();
   return people.find(p => {
     if (!p) return false;
-    return telOf(p).startsWith(d) ||
+    const tel = telOf(p);
+    return tel.startsWith(d) ||
+      /* a contact saved with a country code never matched the ten digits a
+         person actually dials; once enough has been typed to be unambiguous,
+         compare the tail of the number too */
+      (d.length >= 7 && tel.endsWith(d)) ||
       t9Of(p).startsWith(d) ||
       lowerOf(p).startsWith(lv);
   }) || null;
 }
 
+/* the number line is width:100%, so its client width only changes when the
+   device does; reading it back after writing the font size forced a synchronous
+   layout on every single keystroke. Measure once, re-measure on resize. */
+let numMaxW = 0;
 function fitNumber() {
   num.style.fontSize = "40px";
-  const max = num.clientWidth;
+  const max = numMaxW || (numMaxW = num.clientWidth);
   if (!max) return;   /* keypad hidden: measuring here used to shrink the number to 19px for good */
   const w = num.scrollWidth;
   if (w <= max) return;
@@ -813,10 +833,17 @@ function add(c) {
   if (navigator.vibrate) navigator.vibrate(6);
 }
 
-del.addEventListener("click", () => { if (del._lp) { del._lp = false; return; } value = value.slice(0, -1); render(); bump(); });
+/* same expired-latch rule as the keypad: a long press that ended without a
+   click used to eat the following tap on delete */
+del.addEventListener("click", () => {
+  const t = del._lpt;
+  del._lpt = 0;
+  if (t && Date.now() - t < 900) return;
+  value = value.slice(0, -1); render(); bump();
+});
 let hold;
 del.addEventListener("pointerdown", () => {
-  del._lp = false; hold = setTimeout(() => { del._lp = true; value = ""; render(); bump(); }, 600);
+  del._lpt = 0; hold = setTimeout(() => { del._lpt = Date.now(); value = ""; render(); bump(); }, 600);
 });
 ["pointerup","pointerleave","pointercancel"].forEach(e =>
   del.addEventListener(e, () => clearTimeout(hold)));
@@ -1344,7 +1371,7 @@ snap();
 render();
 
 /* real contacts and call history, when running inside the Android app */
-(function hydrateNative() {
+function hydrateNative() {
   if (!window.PhoneNative) return;
   try {
     const cs = JSON.parse(PhoneNative.contacts() || "[]");
@@ -1356,7 +1383,11 @@ render();
   renderFavs();
   renderRecents("all");
   renderContacts($("q").value || "");
-})();
+}
+hydrateNative();
+/* the permission dialog result re-runs this instead of reloading the whole page,
+   which used to replay the entrance animations and throw away a typed number */
+window.__phoneHydrate = hydrateNative;
 
 /* one re-measure per frame; also keeps the All/Missed capsule on the selected side
    instead of snapping it back to All when the fonts finish loading */
@@ -1365,6 +1396,7 @@ function remeasureLayout() {
   if (remeasure) return;
   remeasure = true;
   tabMids = null;   /* the tab centres are about to move: drop the cached ones */
+  numMaxW = 0;      /* and so is the width the number line fits into */
   requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
 }
 addEventListener("resize", remeasureLayout);

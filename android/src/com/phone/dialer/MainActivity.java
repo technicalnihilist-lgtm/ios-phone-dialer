@@ -132,7 +132,13 @@ public class MainActivity extends Activity {
                 if (results[i] == PackageManager.PERMISSION_GRANTED) { gained = true; break; }
             }
         }
-        if (gained) web.reload();
+        /* Re-read contacts and the call log in place. A full reload replayed
+           every entrance animation and threw away a number that had already
+           been typed — which is exactly what happened on the first launch,
+           because the dialog result arrives after the page has loaded. */
+        if (gained) {
+            web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+        }
     }
 
     /**
@@ -175,9 +181,15 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    /** tel:/sms:/mailto: links leave the app for the system dialer. */
+    /**
+     * tel:/sms:/mailto: links leave the app for the system dialer; every other
+     * URL is refused. This WebView only ever shows the bundled asset page, so
+     * returning false for anything else let a link or a redirect load a web page
+     * (or, with file access enabled, another file:// path) over the dialer, with
+     * no way back except relaunching the app.
+     */
     private boolean handoff(String url) {
-        if (url == null) return false;
+        if (url == null) return true;
         if (url.startsWith("tel:") || url.startsWith("sms:") || url.startsWith("smsto:")
                 || url.startsWith("mailto:")) {
             try {
@@ -187,7 +199,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
             return true;
         }
-        return false;
+        return !url.startsWith("file:///android_asset/") && !url.startsWith("about:");
     }
 
     @Override
@@ -247,6 +259,8 @@ public class MainActivity extends Activity {
             if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED)
                 return "[]";
             JSONArray out = new JSONArray();
+            /* one "now" for the whole query, not a fresh pair of Calendars per row */
+            Calendar now = Calendar.getInstance();
             Cursor c = null;
             try {
                 c = getContentResolver().query(
@@ -276,7 +290,7 @@ public class MainActivity extends Activity {
 
                         JSONObject row = new JSONObject();
                         row.put("p", person);
-                        row.put("when", shortTime(when));
+                        row.put("when", shortTime(when, now));
                         row.put("kind", kind);
                         row.put("label", label);
                         out.put(row);
@@ -380,11 +394,14 @@ public class MainActivity extends Activity {
                 }
             };
 
-    /** Same output as before, without building four formatters for every call-log row. */
-    private static String shortTime(long millis) {
+    /**
+     * Same output as before, without building four formatters for every call-log
+     * row — and without building two Calendars for each of them either, which
+     * used to mean eighty of them per forty-row refresh.
+     */
+    private static String shortTime(long millis, Calendar now) {
         Calendar d = Calendar.getInstance();
         d.setTimeInMillis(millis);
-        Calendar now = Calendar.getInstance();
         boolean thisYear = d.get(Calendar.YEAR) == now.get(Calendar.YEAR);
         if (thisYear && d.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)) {
             return FMT_TIME.get().format(new Date(millis));
