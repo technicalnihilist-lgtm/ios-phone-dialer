@@ -1,11 +1,16 @@
-const CACHE = "phone-v1";
+const CACHE = "phone-v2";
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",
   "./icons/icon-180.png", "./icons/icon-192.png", "./icons/icon-512.png"
 ];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      /* one missing asset used to fail the whole install, so the app never updated */
+      .then(c => Promise.all(ASSETS.map(u => c.add(u).catch(() => {}))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", e => {
@@ -17,15 +22,33 @@ self.addEventListener("activate", e => {
 });
 
 self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
+  const req = e.request;
+  if (req.method !== "GET") return;
+  let url;
+  try { url = new URL(req.url); } catch (err) { return; }
+  /* only our own files: third-party responses were being cached for ever */
+  if (url.origin !== self.location.origin) return;
+
+  const store = res => {
+    if (res && res.ok) {                    /* errors used to be cached as if they were assets */
+      const copy = res.clone();
+      caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
+    }
+    return res;
+  };
+
+  if (req.mode === "navigate") {
+    /* network first, so a new build actually reaches an installed app instead of
+       serving the first index.html this device ever saw */
+    e.respondWith(
+      fetch(req).then(store)
+        .catch(() => caches.match(req).then(hit => hit || caches.match("./index.html")))
+    );
+    return;
+  }
+
   e.respondWith(
-    caches.match(e.request).then(hit => {
-      if (hit) return hit;
-      return fetch(e.request).then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
-        return res;
-      }).catch(() => caches.match("./index.html"));
-    })
+    caches.match(req).then(hit => hit || fetch(req).then(store)
+      .catch(() => Response.error()))
   );
 });

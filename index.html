@@ -648,8 +648,14 @@ const recents = [];
 const voicemails = [];
 
 const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const initials = n => n.split(" ").map(w => w[0]).join("").slice(0,2);
-const avHTML = p => `<span class="av" style="--a:${p.c[0]};--b:${p.c[1]}">${esc(initials(p.n))}</span>`;
+const AV_FALLBACK = ["#8e8e93", "#636366"];
+const initials = n => String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean)
+  .map(w => w[0]).join("").slice(0, 2) || "#";
+const avColors = c => (Array.isArray(c) && c.length > 1) ? c : AV_FALLBACK;
+const avHTML = p => {
+  const c = avColors(p && p.c);
+  return `<span class="av" style="--a:${esc(c[0])};--b:${esc(c[1])}">${esc(initials(p && p.n))}</span>`;
+};
 
 /* ---------------- keypad ---------------- */
 const KEYS = [["1",""],["2","ABC"],["3","DEF"],["4","GHI"],["5","JKL"],["6","MNO"],
@@ -663,8 +669,18 @@ let value = "";
 
 /* call history, restored from storage before anything renders */
 let dialed = [];
-try { dialed = JSON.parse(localStorage.getItem("phone.dialed") || "[]"); } catch (e) { dialed = []; }
-if (!Array.isArray(dialed)) dialed = [];
+try {
+  const stored = JSON.parse(localStorage.getItem("phone.dialed") || "[]");
+  if (Array.isArray(stored)) {
+    dialed = stored
+      .filter(d => d && typeof d === "object" && typeof d.number === "string" && d.number)
+      .map(d => ({
+        number: d.number,
+        name: typeof d.name === "string" && d.name ? d.name : d.number,
+        when: typeof d.when === "string" ? d.when : ""
+      }));
+  }
+} catch (e) { dialed = []; }
 
 KEYS.forEach(([d, l], n) => {
   const b = document.createElement("button");
@@ -712,7 +728,13 @@ function findMatch() {
 function fitNumber() {
   num.style.fontSize = "40px";
   const max = num.clientWidth;
-  let size = 40;
+  if (!max) return;   /* keypad hidden: measuring here used to shrink the number to 19px for good */
+  const w = num.scrollWidth;
+  if (w <= max) return;
+  /* glyph width scales with font-size, so estimate the fit in one step
+     instead of stepping 1px at a time (21 forced reflows per keystroke) */
+  let size = Math.min(40, Math.max(19, Math.ceil(40 * max / w)));
+  num.style.fontSize = size + "px";
   while (num.scrollWidth > max && size > 19) {
     size -= 1;
     num.style.fontSize = size + "px";
@@ -726,19 +748,25 @@ function render() {
   const m = value ? findMatch() : null;
   matchEl.classList.toggle("show", !!m);
   if (m) {
-    matchAv.style.setProperty("--a", m.c[0]);
-    matchAv.style.setProperty("--b", m.c[1]);
+    const mc = avColors(m.c);
+    matchAv.style.setProperty("--a", mc[0]);
+    matchAv.style.setProperty("--b", mc[1]);
     matchAv.textContent = initials(m.n);
     matchName.textContent = m.n;
   }
   fitNumber();
 }
 
+let springEase = null, numAnim = null;
 function bump() {
   try {
-    num.animate([{ transform: "scale(1.08)" }, { transform: "scale(1)" }],
-      { duration: 650, easing: getComputedStyle(document.documentElement).getPropertyValue("--spring").trim() || "ease-out" });
-  } catch (e) {}
+    if (springEase === null) {
+      springEase = getComputedStyle(document.documentElement).getPropertyValue("--spring").trim() || "ease-out";
+    }
+    if (numAnim) numAnim.cancel();   /* fast typing used to leave dozens of animations running */
+    numAnim = num.animate([{ transform: "scale(1.08)" }, { transform: "scale(1)" }],
+      { duration: 650, easing: springEase });
+  } catch (e) { numAnim = null; }
 }
 function add(c) {
   if (value.length >= 20) return;
@@ -756,10 +784,14 @@ del.addEventListener("pointerdown", () => {
 ["pointerup","pointerleave","pointercancel"].forEach(e =>
   del.addEventListener(e, () => clearTimeout(hold)));
 
+const isEditable = el => !!el && (el.isContentEditable === true ||
+  /^(input|textarea|select)$/i.test(el.tagName || ""));
 document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeMenu(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (isEditable(e.target)) return;   /* typing in the contacts search box is not dialling */
   if (/^[0-9*#+]$/.test(e.key)) { if (!cs.classList.contains("show")) add(e.key); }
-  else if (e.key === "Backspace") { value = value.slice(0, -1); render(); }
-  else if (e.key === "Escape") { closeMenu(); }
+  else if (e.key === "Backspace" && value) { value = value.slice(0, -1); render(); }
 });
 
 /* long-press the empty area above the keypad → Paste */
@@ -940,23 +972,41 @@ function syncSeg() {
   segpill.classList.add("noanim"); moveSeg(i); void segpill.offsetWidth; segpill.classList.remove("noanim");
 }
 
+/* sorted and lower-cased once per data load, not on every keystroke */
+let contactIdx = [];
+function buildContactIdx() {
+  contactIdx = people.filter(p => p).map(p => ({
+    p: p,
+    key: String(p.n == null ? "" : p.n).toLowerCase(),
+    tel: String(p.t == null ? "" : p.t)
+  })).sort((a, b) => String(a.p.n == null ? "" : a.p.n)
+                      .localeCompare(String(b.p.n == null ? "" : b.p.n)));
+}
 function renderContacts(q) {
-  const list = people
-    .filter(p => !q || p.n.toLowerCase().includes(q.toLowerCase()) || p.t.includes(q))
-    .sort((a, b) => a.n.localeCompare(b.n));
+  const raw = q || "", needle = raw.toLowerCase();
   let out = "", last = "";
-  list.forEach(p => {
-    const L = (p.n || "#")[0].toUpperCase();
+  for (let i = 0; i < contactIdx.length; i++) {
+    const e = contactIdx[i], p = e.p;
+    if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0) continue;
+    const L = String(p.n || "#").charAt(0).toUpperCase();
     if (L !== last) { out += `<div class="sec">${L}</div>`; last = L; }
     out += `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
-      <span class="t"><b>${esc(p.n)}</b><small>${esc(fmt(p.t))}</small></span>
+      <span class="t"><b>${esc(p.n)}</b><small>${esc(fmt(e.tel))}</small></span>
     </button>`;
-  });
+  }
   $("contacts").innerHTML = out || '<div class="empty">No Contacts</div>';
 }
+buildContactIdx();
 renderContacts("");
-$("q").addEventListener("input", e => renderContacts(e.target.value));
+/* a burst of keystrokes renders once per frame instead of once per character */
+let qQueued = false, qValue = "";
+$("q").addEventListener("input", e => {
+  qValue = e.target.value;
+  if (qQueued) return;
+  qQueued = true;
+  requestAnimationFrame(() => { qQueued = false; renderContacts(qValue); });
+});
 
 const vmRows = voicemails.filter(v => people[v.i]);
 $("voicemail").innerHTML = vmRows.length ? vmRows.map(v => {
@@ -1009,7 +1059,18 @@ function placeCall(number, name) {
 
 /* ---------------- call screen ---------------- */
 const device = $("device"), cs = $("callscreen"), csName = $("csName"), csStatus = $("csStatus");
-let callTimer = null, callSecs = 0;
+let callTimer = null, callStartedAt = 0;
+
+/* elapsed time comes from the clock, so it is still right after the timer was paused */
+function paintCallTime() {
+  const secs = Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000));
+  csStatus.textContent = String(Math.floor(secs / 60)).padStart(2, "0") + ":" +
+                         String(secs % 60).padStart(2, "0");
+}
+function startCallTimer() {
+  clearInterval(callTimer);
+  callTimer = setInterval(paintCallTime, 1000);
+}
 
 function startCall(number, person) {
   if (number.replace(/\D/g,"") === "" && !person) return;
@@ -1019,14 +1080,11 @@ function startCall(number, person) {
   device.classList.add("calling");
   cs.setAttribute("aria-hidden","false");
   clearInterval(callTimer); clearTimeout(startCall.t);
-  callSecs = 0;
+  callStartedAt = 0;
   startCall.t = setTimeout(() => {
     if (!cs.classList.contains("show")) return;
-    callTimer = setInterval(() => {
-      callSecs++;
-      csStatus.textContent = String(Math.floor(callSecs / 60)).padStart(2,"0") + ":" +
-                             String(callSecs % 60).padStart(2,"0");
-    }, 1000);
+    callStartedAt = Date.now();
+    startCallTimer();
   }, 2600);
   if (navigator.vibrate) navigator.vibrate(10);
 }
@@ -1047,14 +1105,35 @@ $("call").addEventListener("click", () => {
 });
 
 /* ---------------- clock ---------------- */
+const clockEl = $("clock");
 function tick() {
   const d = new Date();
   let h = d.getHours(), m = String(d.getMinutes()).padStart(2, "0");
   h = h % 12 || 12;
-  $("clock").textContent = h + ":" + m;
+  clockEl.textContent = h + ":" + m;
+}
+/* wake once a minute, right after the minute turns over, instead of every 15s forever */
+let clockT = null;
+function scheduleClock() {
+  clearTimeout(clockT);
+  const d = new Date();
+  clockT = setTimeout(() => { tick(); scheduleClock(); },
+    (60 - d.getSeconds()) * 1000 - d.getMilliseconds() + 25);
 }
 tick();
-setInterval(tick, 15000);
+scheduleClock();
+
+/* nothing on screen needs to tick while the app is in the background */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    clearTimeout(clockT);
+    clearInterval(callTimer);
+    return;
+  }
+  tick();
+  scheduleClock();
+  if (cs.classList.contains("show") && callStartedAt) startCallTimer();
+});
 
 /* ---------------- install / offline ---------------- */
 if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
@@ -1176,13 +1255,23 @@ render();
     const rs = JSON.parse(PhoneNative.callLog() || "[]");
     if (rs.length) { recents.length = 0; rs.forEach(r => recents.push(r)); }
   } catch (e) {}
+  buildContactIdx();
   renderFavs();
   renderRecents("all");
   renderContacts($("q").value || "");
 })();
-addEventListener("resize", () => { snap(); fitNumber(); moveSeg(seg.querySelector("button.on") ? [...seg.querySelectorAll("button")].findIndex(b => b.classList.contains("on")) : 0); });
-if (document.fonts) document.fonts.ready.then(() => { snap(); fitNumber(); moveSeg(0); });
-moveSeg(0);
+
+/* one re-measure per frame; also keeps the All/Missed capsule on the selected side
+   instead of snapping it back to All when the fonts finish loading */
+let remeasure = false;
+function remeasureLayout() {
+  if (remeasure) return;
+  remeasure = true;
+  requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
+}
+addEventListener("resize", remeasureLayout);
+if (document.fonts) document.fonts.ready.then(remeasureLayout);
+syncSeg();
 </script>
 </body>
 </html>

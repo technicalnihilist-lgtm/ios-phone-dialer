@@ -24,6 +24,7 @@ public class DialerInCallService extends InCallService {
     public void onDestroy() {
         super.onDestroy();
         instance = null;
+        current = null;          /* was left pointing at a dead Call after the service died */
     }
 
     @Override

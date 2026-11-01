@@ -28,6 +28,7 @@ import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
@@ -35,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
 
@@ -47,6 +49,16 @@ public class MainActivity extends Activity {
             Manifest.permission.CALL_PHONE,
             Manifest.permission.RECORD_AUDIO
     };
+
+    /** Avatar palette, allocated once instead of once per contact and per call-log row. */
+    private static final String[] PALETTES = {
+            "#ff7a9c", "#ff3d71", "#6aa8ff", "#3a5bff", "#ffb347", "#ff7a1a",
+            "#59e0b4", "#14a37f", "#c58bff", "#7b4dff", "#7fd8ff", "#2aa4d6",
+            "#9be15d", "#00a86b", "#ffd166", "#ef8a17", "#8f9bff", "#4b5bd6"
+    };
+
+    /** Digits kept from a stored number when building the de-duplication key. */
+    private static final Pattern NON_DIAL = Pattern.compile("[^0-9+]");
 
     private WebView web;
 
@@ -155,7 +167,7 @@ public class MainActivity extends Activity {
                         String name = c.getString(0);
                         String number = c.getString(1);
                         if (name == null || number == null) continue;
-                        String key = name + "|" + number.replaceAll("[^0-9+]", "");
+                        String key = name + "|" + NON_DIAL.matcher(number).replaceAll("");
                         if (byKey.containsKey(key)) continue;
                         JSONObject o = new JSONObject();
                         o.put("n", name);
@@ -283,7 +295,11 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String version() {
-            return "2.0";
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception e) {
+                return "";
+            }
         }
     }
 
@@ -291,28 +307,44 @@ public class MainActivity extends Activity {
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
     }
 
+    private static final ThreadLocal<SimpleDateFormat> FMT_TIME =
+            new ThreadLocal<SimpleDateFormat>() {
+                @Override protected SimpleDateFormat initialValue() {
+                    return new SimpleDateFormat("h:mm a", Locale.US);
+                }
+            };
+    private static final ThreadLocal<SimpleDateFormat> FMT_MD =
+            new ThreadLocal<SimpleDateFormat>() {
+                @Override protected SimpleDateFormat initialValue() {
+                    return new SimpleDateFormat("MMM d", Locale.US);
+                }
+            };
+    private static final ThreadLocal<SimpleDateFormat> FMT_MDY =
+            new ThreadLocal<SimpleDateFormat>() {
+                @Override protected SimpleDateFormat initialValue() {
+                    return new SimpleDateFormat("MMM d, yyyy", Locale.US);
+                }
+            };
+
+    /** Same output as before, without building four formatters for every call-log row. */
     private static String shortTime(long millis) {
-        Date d = new Date(millis);
-        Date now = new Date();
-        boolean today = new SimpleDateFormat("yyyyDDD", Locale.US).format(d)
-                .equals(new SimpleDateFormat("yyyyDDD", Locale.US).format(now));
-        if (today) return new SimpleDateFormat("h:mm a", Locale.US).format(d);
-        boolean thisYear = new SimpleDateFormat("yyyy", Locale.US).format(d)
-                .equals(new SimpleDateFormat("yyyy", Locale.US).format(now));
-        return new SimpleDateFormat(thisYear ? "MMM d" : "MMM d, yyyy", Locale.US).format(d);
+        Calendar d = Calendar.getInstance();
+        d.setTimeInMillis(millis);
+        Calendar now = Calendar.getInstance();
+        boolean thisYear = d.get(Calendar.YEAR) == now.get(Calendar.YEAR);
+        if (thisYear && d.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)) {
+            return FMT_TIME.get().format(new Date(millis));
+        }
+        return (thisYear ? FMT_MD.get() : FMT_MDY.get()).format(new Date(millis));
     }
 
     private static JSONArray colorsFor(String name) {
-        String[] palettes = {
-                "#ff7a9c", "#ff3d71", "#6aa8ff", "#3a5bff", "#ffb347", "#ff7a1a",
-                "#59e0b4", "#14a37f", "#c58bff", "#7b4dff", "#7fd8ff", "#2aa4d6",
-                "#9be15d", "#00a86b", "#ffd166", "#ef8a17", "#8f9bff", "#4b5bd6"
-        };
-        int h = Math.abs(name == null ? 0 : name.hashCode());
-        int i = (h % (palettes.length / 2)) * 2;
+        /* & 0x7fffffff, not Math.abs: abs(Integer.MIN_VALUE) is still negative and threw. */
+        int h = (name == null ? 0 : name.hashCode()) & 0x7fffffff;
+        int i = (h % (PALETTES.length / 2)) * 2;
         JSONArray a = new JSONArray();
-        a.put(palettes[i]);
-        a.put(palettes[i + 1]);
+        a.put(PALETTES[i]);
+        a.put(PALETTES[i + 1]);
         return a;
     }
 }

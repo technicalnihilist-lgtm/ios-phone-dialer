@@ -90,7 +90,8 @@ public class CallActivity extends Activity {
 
         String number = getIntent() == null ? "" : getIntent().getStringExtra("number");
         if (number == null) number = "";
-        nameView.setText(lookupName(number) != null ? lookupName(number) : number);
+        String looked = lookupName(number);          /* was queried twice, on the UI thread */
+        nameView.setText(looked != null ? looked : number);
 
         muteBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
@@ -257,7 +258,10 @@ public class CallActivity extends Activity {
     private void refreshStatus() {
         Call call = DialerInCallService.current;
         if (call == null) {
-            statusView.setText("call ended");
+            /* the service went away: stop the 500 ms ticker and close instead of
+               showing "call ended" and polling for ever */
+            ticker.removeCallbacks(tick);
+            finish();
             return;
         }
         int state;
