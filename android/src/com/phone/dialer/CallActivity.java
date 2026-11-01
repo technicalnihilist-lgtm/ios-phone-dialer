@@ -239,6 +239,9 @@ public class CallActivity extends Activity {
         startedAt = 0;
         onHold = false;
         muted = false;
+        /* a recording started on the previous call kept running, and its button
+           still said "stop" over the new caller's name */
+        stopRecordingIfAny();
         if (holdBtn != null) { holdBtn.setSelected(false); holdLabel.setText("hold"); }
         if (muteBtn != null) { muteBtn.setSelected(false); muteLabel.setText("mute"); }
         if (statusView != null) setTextIfChanged(statusView, "connecting…");
@@ -353,6 +356,20 @@ public class CallActivity extends Activity {
         }
     }
 
+    /**
+     * Tapping Record with the microphone permission denied asked for it and then
+     * did nothing at all: no result handler existed, so the user had to come back
+     * and press Record a second time before anything was captured.
+     */
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code != 20 || isFinishing()) return;
+        boolean granted = results != null && results.length > 0
+                && results[0] == PackageManager.PERMISSION_GRANTED;
+        if (granted && !recording) toggleRecord();
+    }
+
     private void stopRecordingIfAny() {
         if (recorder != null) {
             try { recorder.stop(); } catch (Exception ignored) { }
@@ -439,6 +456,7 @@ public class CallActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        lookupSeq++;             /* a lookup still in flight must not paint into a dead screen */
         ticker.removeCallbacks(tick);
         ticker.removeCallbacks(stopTone);
         stopRecordingIfAny();

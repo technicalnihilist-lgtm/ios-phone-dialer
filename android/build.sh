@@ -45,17 +45,20 @@ echo "== zipalign"
 zipalign -f -p 4 build/unsigned.apk build/aligned.apk
 
 echo "== keystore"
-if [ ! -f phone.keystore ]; then
-  keytool -J-Xmx192m -J-XX:CompressedClassSpaceSize=32m -J-XX:ActiveProcessorCount=1 -J-XX:+UseSerialGC \
-    -genkeypair -keystore phone.keystore -alias phone \
-    -keyalg RSA -keysize 2048 -validity 10950 \
-    -storepass phonedialer -keypass phonedialer \
-    -dname "CN=Phone Dialer, OU=Mobile, O=Phone, L=Mumbai, ST=Maharashtra, C=IN" 2>&1 | tail -1
+# Never mint a key here. An APK signed with a freshly generated key has a
+# different signature, so the system refuses to install it over the build that
+# is already on the device. The release key lives outside this repo: point
+# KEYSTORE at it. Without one the build stops at an unsigned, aligned APK.
+KS=${KEYSTORE:-phone.keystore}
+if [ ! -f "$KS" ]; then
+  echo "!! no signing key at $KS"
+  echo "!! APK left unsigned at build/aligned.apk - do not publish it"
+  exit 0
 fi
 
 echo "== sign"
 $J -jar "$BT/lib/apksigner.jar" sign \
-  --ks phone.keystore --ks-pass pass:phonedialer --key-pass pass:phonedialer \
+  --ks "$KS" --ks-pass "pass:${KS_PASS:-phonedialer}" --key-pass "pass:${KEY_PASS:-phonedialer}" \
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out Phone-Dialer.apk build/aligned.apk
 

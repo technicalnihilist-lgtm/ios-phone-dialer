@@ -678,7 +678,10 @@ try {
         number: d.number,
         name: typeof d.name === "string" && d.name ? d.name : d.number,
         when: typeof d.when === "string" ? d.when : ""
-      }));
+      }))
+      /* the write path keeps 40 rows but the read path took whatever it found,
+         so one oversized or hand-edited value rebuilt thousands of rows */
+      .slice(0, 40);
   }
 } catch (e) { dialed = []; }
 
@@ -829,12 +832,22 @@ document.addEventListener("keydown", e => {
 });
 
 /* long-press the empty area above the keypad → Paste */
-let pressT = null;
+let pressT = null, pressX = 0, pressY = 0;
 dialtop.addEventListener("pointerdown", e => {
-  pressT = setTimeout(() => openMenu(e.clientX, e.clientY), 480);
+  pressX = e.clientX; pressY = e.clientY;
+  clearTimeout(pressT);
+  pressT = setTimeout(() => { pressT = null; openMenu(pressX, pressY); }, 480);
 });
-["pointerup","pointerleave","pointercancel","pointermove"].forEach(ev =>
+["pointerup","pointerleave","pointercancel"].forEach(ev =>
   dialtop.addEventListener(ev, () => clearTimeout(pressT)));
+/* a finger never holds perfectly still, and the first pointermove — even a
+   sub-pixel one — used to cancel the timer, so long-press Paste rarely opened.
+   Now only a real drag (past the touch slop) cancels it. */
+dialtop.addEventListener("pointermove", e => {
+  if (pressT && (Math.abs(e.clientX - pressX) > 10 || Math.abs(e.clientY - pressY) > 10)) {
+    clearTimeout(pressT);
+  }
+});
 
 function openMenu(x, y) {
   const menu = $("menu"), r = $("device").getBoundingClientRect();
@@ -1090,7 +1103,9 @@ function placeCall(number, name) {
   if (window.PhoneNative && PhoneNative.dial) {
     PhoneNative.dial(d);                        // native app: place a real call
   } else if (MOBILE) {
-    window.location.href = "tel:" + d;          // browser: hand off to the system dialer
+    /* a bare "#" starts a URI fragment, so *123# and *#06# reached the system
+       dialer cut off at the "#" — the same bug the native bridge already fixed */
+    window.location.href = "tel:" + d.replace(/#/g, "%23");   // browser: hand off to the system dialer
   } else {
     startCall(d, { n: name || fmt(raw) });      // desktop: show the in-app call screen
   }
@@ -1108,6 +1123,10 @@ function paintCallTime() {
 }
 function startCallTimer() {
   clearInterval(callTimer);
+  /* the status sat on "calling…" until the first one-second tick, so the timer
+     only showed up 3.6 s after dialling, and came back a second stale after
+     returning from the background */
+  paintCallTime();
   callTimer = setInterval(paintCallTime, 1000);
 }
 
@@ -1186,8 +1205,18 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 (function installTip() {
   const card = $("install"), btn = $("installBtn"), x = $("installX");
   if (!card) return;
+  /* the "x" was only wired up on the browser path, so inside the Android app the
+     card came back on every launch with a dismiss button that did nothing and no
+     way to get rid of it short of making Phone the default dialer */
+  let off = false;
+  try { off = localStorage.getItem("phone.installTip") === "off"; } catch (e) {}
+  if (x) x.addEventListener("click", () => {
+    card.classList.remove("show");
+    try { localStorage.setItem("phone.installTip", "off"); } catch (e) {}
+  });
   if (window.PhoneNative) {
     try { if (PhoneNative.isDefaultDialer()) return; } catch (e) { return; }
+    if (off) return;
     $("installText").innerHTML = "Set <b>Phone</b> as your default dialer to get the in-call speaker, mute, hold and recording controls.";
     btn.hidden = false;
     btn.textContent = "Set";
@@ -1200,8 +1229,6 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   }
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
-  let off = false;
-  try { off = localStorage.getItem("phone.installTip") === "off"; } catch (e) {}
   if (standalone || off || location.protocol === "file:") return;
   let prompt = null;
   addEventListener("beforeinstallprompt", e => { e.preventDefault(); prompt = e; btn.hidden = false; });
@@ -1209,10 +1236,6 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     $("installText").innerHTML = "Tap <b>Share</b> then <b>Add to Home Screen</b> to keep Phone on your home screen.";
   }
   card.classList.add("show");
-  x.addEventListener("click", () => {
-    card.classList.remove("show");
-    try { localStorage.setItem("phone.installTip", "off"); } catch (e) {}
-  });
   btn.addEventListener("click", async () => {
     if (!prompt) return;
     prompt.prompt();
