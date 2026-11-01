@@ -83,7 +83,7 @@ manifest.webmanifest     PWA manifest
 sw.js                    service worker (offline cache)
 icons/                   app icons (180 / 192 / 512)
 screenshots/             rendered from index.html
-apk/Phone-Dialer.apk     signed, installable build (v2.4.1)
+apk/Phone-Dialer.apk     signed, installable build (v2.4)
 android/                 native app source
   AndroidManifest.xml    permissions, dialer role, InCallService
   src/com/phone/dialer/
