@@ -64,6 +64,9 @@ public class MainActivity extends Activity {
 
     private WebView web;
 
+    /** Whether contacts or the call log were readable the last time we looked. */
+    private boolean hadDataAccess;
+
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle state) {
@@ -106,6 +109,7 @@ public class MainActivity extends Activity {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
 
+        hadDataAccess = hasDataAccess();
         askPermissions();
     }
 
@@ -139,6 +143,9 @@ public class MainActivity extends Activity {
         if (gained) {
             web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
         }
+        /* onResume() runs again right after this result arrives; without this the
+           very first grant re-read the whole contact list twice */
+        hadDataAccess = hasDataAccess();
     }
 
     /**
@@ -156,6 +163,12 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
+    /** Contacts or the call log can be read right now. */
+    private boolean hasDataAccess() {
+        return checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -163,6 +176,14 @@ public class MainActivity extends Activity {
             web.resumeTimers();
             web.onResume();
         }
+        /* Granting contacts or call-log access from the system Settings screen and
+           coming back left the app showing its empty states until it was killed
+           and reopened: nothing re-read the data when it came back to the front. */
+        boolean now = hasDataAccess();
+        if (now && !hadDataAccess && web != null) {
+            web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+        }
+        hadDataAccess = now;
     }
 
     @Override
@@ -259,8 +280,10 @@ public class MainActivity extends Activity {
             if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED)
                 return "[]";
             JSONArray out = new JSONArray();
-            /* one "now" for the whole query, not a fresh pair of Calendars per row */
+            /* one "now" and one scratch Calendar for the whole query, not a fresh
+               pair of them for every row */
             Calendar now = Calendar.getInstance();
+            Calendar rowCal = Calendar.getInstance();
             Cursor c = null;
             try {
                 c = getContentResolver().query(
@@ -290,7 +313,7 @@ public class MainActivity extends Activity {
 
                         JSONObject row = new JSONObject();
                         row.put("p", person);
-                        row.put("when", shortTime(when, now));
+                        row.put("when", shortTime(when, now, rowCal));
                         row.put("kind", kind);
                         row.put("label", label);
                         out.put(row);
@@ -397,10 +420,10 @@ public class MainActivity extends Activity {
     /**
      * Same output as before, without building four formatters for every call-log
      * row — and without building two Calendars for each of them either, which
-     * used to mean eighty of them per forty-row refresh.
+     * used to mean eighty of them per forty-row refresh. The scratch Calendar is
+     * now owned by the caller and reused across the whole query.
      */
-    private static String shortTime(long millis, Calendar now) {
-        Calendar d = Calendar.getInstance();
+    private static String shortTime(long millis, Calendar now, Calendar d) {
         d.setTimeInMillis(millis);
         boolean thisYear = d.get(Calendar.YEAR) == now.get(Calendar.YEAR);
         if (thisYear && d.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)) {

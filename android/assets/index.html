@@ -783,19 +783,31 @@ function findMatch() {
    layout on every single keystroke. Measure once, re-measure on resize. */
 let numMaxW = 0;
 function fitNumber() {
+  /* .number animates font-size, so a scrollWidth read straight after writing a
+     size measured the *previous* size: the loop below never saw the number
+     narrow, and every value long enough to need shrinking collapsed all the way
+     to the 19px floor instead of stopping at the largest size that fits.
+     Measure with the transition suspended, then hand it back to CSS. */
+  const prevTransition = num.style.transition;
+  num.style.transition = "none";
   num.style.fontSize = "40px";
   const max = numMaxW || (numMaxW = num.clientWidth);
-  if (!max) return;   /* keypad hidden: measuring here used to shrink the number to 19px for good */
-  const w = num.scrollWidth;
-  if (w <= max) return;
-  /* glyph width scales with font-size, so estimate the fit in one step
-     instead of stepping 1px at a time (21 forced reflows per keystroke) */
-  let size = Math.min(40, Math.max(19, Math.ceil(40 * max / w)));
-  num.style.fontSize = size + "px";
-  while (num.scrollWidth > max && size > 19) {
-    size -= 1;
-    num.style.fontSize = size + "px";
+  if (!max) {   /* keypad hidden: measuring here used to shrink the number to 19px for good */
+    num.style.transition = prevTransition;
+    return;
   }
+  const w = num.scrollWidth;
+  if (w > max) {
+    /* glyph width scales with font-size, so estimate the fit in one step
+       instead of stepping 1px at a time (21 forced reflows per keystroke) */
+    let size = Math.min(40, Math.max(19, Math.ceil(40 * max / w)));
+    num.style.fontSize = size + "px";
+    while (num.scrollWidth > max && size > 19) {
+      size -= 1;
+      num.style.fontSize = size + "px";
+    }
+  }
+  num.style.transition = prevTransition;
 }
 
 function render() {
@@ -854,8 +866,11 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape") { closeMenu(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (isEditable(e.target)) return;   /* typing in the contacts search box is not dialling */
-  if (/^[0-9*#+]$/.test(e.key)) { if (!cs.classList.contains("show")) add(e.key); }
-  else if (e.key === "Backspace" && value) { value = value.slice(0, -1); render(); }
+  /* the digit keys refuse to edit the number behind the call screen but
+     Backspace did not, so it silently ate digits off the hidden keypad */
+  if (cs.classList.contains("show")) return;
+  if (/^[0-9*#+]$/.test(e.key)) add(e.key);
+  else if (e.key === "Backspace" && value) { value = value.slice(0, -1); render(); bump(); }
 });
 
 /* long-press the empty area above the keypad → Paste */
@@ -911,7 +926,10 @@ const mids = () => tabMids || (tabMids = tabs.map(mid));
 const near = x => { const m = mids(); return m.reduce((b, v, k) =>
   Math.abs(v - x) < Math.abs(m[b] - x) ? k : b, 0); };
 
+let marked = -1;
 function mark(i) {
+  if (i === marked) return;   /* the capsule drag called this on every frame */
+  marked = i;
   tabs.forEach((t, k) => {
     t.classList.toggle("on", k === i);
     t.setAttribute("aria-selected", k === i);
@@ -965,16 +983,23 @@ tabs.forEach((t, k) => {
 });
 
 /* press and drag the selection capsule, like iOS 26 */
+/* every pointermove read the bar rect, the pill width and the first/last tab
+   offsets *after* the previous frame's style.left write, so the drag forced a
+   synchronous layout on every frame. Measure once, at the start of the drag. */
+let dragBarLeft = 0;
 tabbar.addEventListener("pointerdown", e => {
   tabbar.setPointerCapture(e.pointerId);
-  const x = e.clientX - tabbar.getBoundingClientRect().left, i = near(x);
-  drag = { x0: x, moved: false, dx: x - mids()[i] };
+  dragBarLeft = tabbar.getBoundingClientRect().left;
+  const x = e.clientX - dragBarLeft, i = near(x);
+  drag = { x0: x, moved: false, dx: x - mids()[i], w: 0, last: 0,
+           min: tabs[0].offsetLeft,
+           max: tabs[tabs.length - 1].offsetLeft + tabs[tabs.length - 1].offsetWidth };
   if (Math.abs(pill.offsetLeft + pill.offsetWidth / 2 - mids()[i]) > 2) { glide(i); mark(i); }
   pill.classList.add("grab");
 });
 tabbar.addEventListener("pointermove", e => {
   if (!drag) return;
-  const x = e.clientX - tabbar.getBoundingClientRect().left;
+  const x = e.clientX - dragBarLeft;
   if (!drag.moved && Math.abs(x - drag.x0) < 5) return;
   if (!drag.moved) {
     drag.moved = true;
@@ -983,17 +1008,21 @@ tabbar.addEventListener("pointermove", e => {
     pill.style.width = tabs[0].offsetWidth + "px";
     void pill.offsetWidth;
     pill.classList.remove("noanim");
+    drag.w = pill.offsetWidth;   /* read once here, not once per frame */
   }
-  const w = pill.offsetWidth;
-  const min = tabs[0].offsetLeft;
-  const max = tabs[tabs.length - 1].offsetLeft + tabs[tabs.length - 1].offsetWidth - w;
-  const left = Math.max(min, Math.min(max, x - drag.dx - w / 2));
+  const w = drag.w;
+  const max = drag.max - w;
+  const left = Math.max(drag.min, Math.min(max, x - drag.dx - w / 2));
+  drag.last = left;
   pill.style.left = left + "px";
   mark(near(left + w / 2));
 });
 function release() {
   if (!drag) return;
-  const i = drag.moved ? near(pill.offsetLeft + pill.offsetWidth / 2) : near(drag.x0);
+  /* the capsule's left is animated, so pill.offsetLeft still reads an
+     intermediate position here — the finger's last target is what the highlight
+     is already showing, and picking from the lagging box landed on the wrong tab */
+  const i = drag.moved ? near(drag.last + drag.w / 2) : near(drag.x0);
   drag = null;
   pill.classList.remove("grab");
   go(i);
@@ -1034,6 +1063,11 @@ function renderRecents(filter) {
 renderRecents("all");
 
 const seg = $("seg"), segpill = $("segpill");
+/* which Recents filter is selected — the pill is the only record of it */
+function recentsFilter() {
+  const b = seg.querySelectorAll("button")[1];
+  return b && b.classList.contains("on") ? "missed" : "all";
+}
 function moveSeg(i) {
   const b = seg.querySelectorAll("button")[i];
   segpill.style.left = b.offsetLeft + "px";
@@ -1054,19 +1088,29 @@ function syncSeg() {
 /* sorted and lower-cased once per data load, not on every keystroke */
 let contactIdx = [];
 function buildContactIdx() {
-  contactIdx = people.filter(p => p).map(p => ({
-    p: p,
-    key: String(p.n == null ? "" : p.n).toLowerCase(),
-    tel: String(p.t == null ? "" : p.t)
-  })).sort((a, b) => String(a.p.n == null ? "" : a.p.n)
+  contactIdx = people.filter(p => p).map(p => {
+    const tel = String(p.t == null ? "" : p.t);
+    return {
+      p: p,
+      key: String(p.n == null ? "" : p.n).toLowerCase(),
+      tel: tel,
+      /* the number as it is saved ("(555) 123-4567") and the digits it actually
+         dials; search needs the second one */
+      dig: tel.replace(/\D/g, "")
+    };
+  }).sort((a, b) => String(a.p.n == null ? "" : a.p.n)
                       .localeCompare(String(b.p.n == null ? "" : b.p.n)));
 }
 function renderContacts(q) {
   const raw = q || "", needle = raw.toLowerCase();
+  /* a number is stored the way the device saved it, so searching the digits a
+     person would dial ("5551234") matched nothing at all */
+  const needleDig = needle.replace(/[^0-9]/g, "");
   let out = "", last = "";
   for (let i = 0; i < contactIdx.length; i++) {
     const e = contactIdx[i], p = e.p;
-    if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0) continue;
+    if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0
+        && !(needleDig && e.dig.indexOf(needleDig) >= 0)) continue;
     const L = String(p.n || "#").charAt(0).toUpperCase();
     if (L !== last) { out += `<div class="sec">${L}</div>`; last = L; }
     out += `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
@@ -1125,10 +1169,16 @@ function placeCall(number, name) {
   dialed.unshift({ number: d, name: name || fmt(raw), when: stamp() });
   dialed = dialed.slice(0, 40);
   try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
-  renderRecents(seg.querySelectorAll("button")[1].classList.contains("on") ? "missed" : "all");
+  renderRecents(recentsFilter());
   if (navigator.vibrate) navigator.vibrate(8);
   if (window.PhoneNative && PhoneNative.dial) {
-    PhoneNative.dial(d);                        // native app: place a real call
+    /* the bridge can already be gone (Activity torn down, page kept alive): an
+       exception here left the tap with no effect at all and nothing to catch it */
+    try {
+      PhoneNative.dial(d);                      // native app: place a real call
+    } catch (err) {
+      window.location.href = "tel:" + d.replace(/#/g, "%23");
+    }
   } else if (MOBILE) {
     /* a bare "#" starts a URI fragment, so *123# and *#06# reached the system
        dialer cut off at the "#" — the same bug the native bridge already fixed */
@@ -1289,6 +1339,14 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   ];
   let G = Object.assign({}, DEF);
   try { Object.assign(G, JSON.parse(localStorage.getItem("phone.glass") || "{}")); } catch (e) {}
+  /* the stored values were written straight into custom properties, so a
+     half-written or hand-edited entry like {"v":"abc"} set --g-a:NaN and took
+     the backdrop blur out entirely. Coerce to a number and clamp to the slider. */
+  FIELDS.forEach(([k, , lo, hi]) => {
+    const raw = G[k];
+    const n = (raw === null || raw === undefined || raw === "") ? NaN : Number(raw);
+    G[k] = isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : DEF[k];
+  });
   const sheet = $("gsheet"), gear = $("gear"), rows = $("gsRows"), ins = {};
 
   /* a slider drag fires 'input' on every frame; writing localStorage on each
@@ -1381,7 +1439,9 @@ function hydrateNative() {
   } catch (e) {}
   buildContactIdx();
   renderFavs();
-  renderRecents("all");
+  /* re-reading the call log used to drop the Recents list back to All while the
+     Missed pill stayed selected, so the filtered list showed outgoing calls */
+  renderRecents(recentsFilter());
   renderContacts($("q").value || "");
 }
 hydrateNative();
