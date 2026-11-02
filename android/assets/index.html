@@ -991,6 +991,13 @@ function showView(i) {
   clearTimeout(showView.t);
   showView.t = setTimeout(() => { app.classList.remove(d); old.classList.remove("leaving"); }, 1200);
   if (NAMES[i] === "recents") syncSeg();
+  /* the keypad can be resized while it is off screen — the soft keyboard opening
+     over the contacts search, a window resize — and fitNumber() cannot measure a
+     hidden line, because clientWidth is 0: it gives up and leaves the cached
+     width at 0. Coming back then kept whatever font size the line had before
+     that resize, so a long number returned clipped, with no ellipsis to show it.
+     Measure again now that the line has a width. */
+  else if (NAMES[i] === "keypad") { numMaxW = 0; fitOkLen = 0; fitNumber(); }
 }
 function go(i) { glide(i); showView(i); }
 
@@ -1105,6 +1112,12 @@ function syncSeg() {
 
 /* sorted and lower-cased once per data load, not on every keystroke */
 let contactIdx = [];
+/* localeCompare() sets up a collation for every single comparison, and sorting
+   a few thousand contacts is tens of thousands of them, all on the main thread
+   while the page is coming up. One collator answers all of them, same order,
+   and sorts the same list about twice as fast. */
+const nameCollator = (typeof Intl !== "undefined" && Intl.Collator) ? new Intl.Collator() : null;
+const cmpName = (a, b) => nameCollator ? nameCollator.compare(a, b) : a.localeCompare(b);
 function buildContactIdx() {
   contactIdx = people.filter(p => p).map(p => {
     const tel = String(p.t == null ? "" : p.t);
@@ -1116,8 +1129,8 @@ function buildContactIdx() {
          dials; search needs the second one */
       dig: tel.replace(/\D/g, "")
     };
-  }).sort((a, b) => String(a.p.n == null ? "" : a.p.n)
-                      .localeCompare(String(b.p.n == null ? "" : b.p.n)));
+  }).sort((a, b) => cmpName(String(a.p.n == null ? "" : a.p.n),
+                            String(b.p.n == null ? "" : b.p.n)));
 }
 function renderContacts(q) {
   const raw = q || "", needle = raw.toLowerCase();
@@ -1471,6 +1484,11 @@ function hydrateNative() {
      Missed pill stayed selected, so the filtered list showed outgoing calls */
   renderRecents(recentsFilter());
   renderContacts($("q").value || "");
+  /* the keypad was never repainted after a data load. A number typed while the
+     contacts were still being read — or before the permission result arrived —
+     therefore showed no contact match under it, and kept the font size it had
+     been given while the list was empty, until the next keystroke. */
+  render();
 }
 /* the contact read, the JSON parse and a full re-render of every list used to
    run inside the page's first script pass, so nothing painted until all of it

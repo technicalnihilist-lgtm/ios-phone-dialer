@@ -36,6 +36,12 @@ public class CallActivity extends Activity {
 
     private AudioManager audio;
     private MediaRecorder recorder;
+    /**
+     * The file the current recording is being written to. stop() throws when it
+     * has no valid data to finalise, and the file prepare() already created is
+     * then left behind empty — keeping the handle is what lets it be removed.
+     */
+    private File recordFile;
     private boolean recording;
     private boolean muted;
     private boolean onHold;
@@ -111,6 +117,18 @@ public class CallActivity extends Activity {
                        counting on from the call that just ended */
                     a.answered = false;
                     a.startedAt = 0;
+                    /* the mute, hold and recording state on screen belonged to
+                       the call that just ended. onNewIntent() already drops
+                       them when a new call takes the screen; this path — the
+                       screen falling back to a call that is still up — did not,
+                       so the labels kept the finished call's state and a
+                       recording started on it kept running, unwatched, under
+                       the other caller's name. */
+                    a.onHold = false;
+                    a.muted = false;
+                    if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
+                    if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
+                    a.releaseRecorderOffThread();
                     a.showCaller(number);
                 } catch (Exception ignored) { }
             }
@@ -384,6 +402,7 @@ public class CallActivity extends Activity {
             r.prepare();
             r.start();
             recorder = r;
+            recordFile = out;
             recording = true;
             recordBtn.setSelected(true);
             recordLabel.setText("stop");
@@ -393,8 +412,9 @@ public class CallActivity extends Activity {
             /* prepare() creates the file before the recorder can fail, so every
                blocked attempt left another empty .m4a behind in the app's files
                directory; nothing was ever written to it */
-            try { out.delete(); } catch (Exception ignored) { }
+            deleteRecordFile(out);
             recorder = null;
+            recordFile = null;
             recording = false;
             recordBtn.setSelected(false);
             recordLabel.setText("record");
@@ -420,10 +440,16 @@ public class CallActivity extends Activity {
 
     private void stopRecordingIfAny() {
         if (recorder != null) {
-            try { recorder.stop(); } catch (Exception ignored) { }
+            boolean stopped = true;
+            try { recorder.stop(); } catch (Exception e) { stopped = false; }
             try { recorder.release(); } catch (Exception ignored) { }
             recorder = null;
+            /* stop() failed, so nothing was finalised: the file prepare() made
+               is empty and would sit in the app's files directory for ever.
+               The start-failure path already removes its own leftover. */
+            if (!stopped) deleteRecordFile(recordFile);
         }
+        recordFile = null;
         recording = false;
         resetRecordButton();
     }
@@ -437,17 +463,28 @@ public class CallActivity extends Activity {
      */
     private void releaseRecorderOffThread() {
         final MediaRecorder r = recorder;
+        final File f = recordFile;
         recorder = null;
+        recordFile = null;
         recording = false;
         resetRecordButton();
         if (r == null) return;
         LOOKUPS.execute(new Runnable() {
             @Override
             public void run() {
-                try { r.stop(); } catch (Exception ignored) { }
+                boolean stopped = true;
+                try { r.stop(); } catch (Exception e) { stopped = false; }
                 try { r.release(); } catch (Exception ignored) { }
+                /* same empty leftover as the stop path above */
+                if (!stopped) deleteRecordFile(f);
             }
         });
+    }
+
+    /** Removes a recording file that was created but never written to. */
+    private static void deleteRecordFile(File f) {
+        if (f == null) return;
+        try { f.delete(); } catch (Exception ignored) { }
     }
 
     private void resetRecordButton() {

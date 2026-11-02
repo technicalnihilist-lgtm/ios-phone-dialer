@@ -1,7 +1,17 @@
 #!/bin/bash
 set -e
 SDK=${SDK:-/scratch/work/sdk}
-export JAVA_HOME=$SDK/jdk-17.0.21+9
+# Adoptium names the unpacked directory after the exact build it shipped, so a
+# hard-coded "jdk-17.0.21+9" stopped resolving the day 17.0.22 came out. Take
+# whatever jdk-* is actually there.
+if [ -z "$JAVA_HOME" ]; then
+  JAVA_HOME=$(ls -d "$SDK"/jdk-* 2>/dev/null | head -1 || true)
+fi
+export JAVA_HOME
+if [ -z "$JAVA_HOME" ] || [ ! -x "$JAVA_HOME/bin/javac" ]; then
+  echo "!! no JDK found under $SDK (expected $SDK/jdk-*)"
+  exit 1
+fi
 export PATH=$JAVA_HOME/bin:$SDK/android-14:$PATH
 PLATFORM=$SDK/android-35/android.jar
 BT=$SDK/android-14
@@ -9,6 +19,15 @@ J="$JAVA_HOME/bin/java -Xmx192m -XX:MaxMetaspaceSize=64m -XX:CompressedClassSpac
 # work from the directory this script lives in: the checkout can be cloned
 # anywhere, and a hard-coded path only ever built the one layout
 cd "$(dirname "$0")"
+
+# assets/index.html is the page aapt2 puts in the APK, and nothing used to keep
+# it in step with the page in the repository root: a forgotten copy shipped the
+# previous build's UI inside a new APK. Copy it in as the first thing we do.
+if [ -f ../index.html ]; then
+  cp ../index.html assets/index.html
+else
+  echo "!! ../index.html missing: packaging whatever assets/ already holds"
+fi
 
 rm -rf build && mkdir -p build/gen build/classes build/dex
 
