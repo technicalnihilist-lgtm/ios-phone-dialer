@@ -64,8 +64,12 @@ public class MainActivity extends Activity {
 
     private WebView web;
 
-    /** Whether contacts or the call log were readable the last time we looked. */
-    private boolean hadDataAccess;
+    /**
+     * Whether contacts and the call log were readable the last time we looked,
+     * tracked separately: access can be lost for one of them while the other is
+     * still granted, and a single combined flag never noticed that.
+     */
+    private boolean hadContacts, hadCallLog;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -109,7 +113,7 @@ public class MainActivity extends Activity {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
 
-        hadDataAccess = hasDataAccess();
+        rememberAccess();
         askPermissions();
     }
 
@@ -145,7 +149,7 @@ public class MainActivity extends Activity {
         }
         /* onResume() runs again right after this result arrives; without this the
            very first grant re-read the whole contact list twice */
-        hadDataAccess = hasDataAccess();
+        rememberAccess();
     }
 
     /**
@@ -163,10 +167,23 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
-    /** Contacts or the call log can be read right now. */
-    private boolean hasDataAccess() {
-        return checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
-                || checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED;
+    private boolean hasContacts() {
+        return checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasCallLog() {
+        return checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Records what is readable now, so the next resume can tell what changed. */
+    private void rememberAccess() {
+        hadContacts = hasContacts();
+        hadCallLog = hasCallLog();
+    }
+
+    /** Access was granted or taken away since the last time we looked. */
+    private boolean accessChanged() {
+        return hadContacts != hasContacts() || hadCallLog != hasCallLog();
     }
 
     @Override
@@ -178,12 +195,14 @@ public class MainActivity extends Activity {
         }
         /* Granting contacts or call-log access from the system Settings screen and
            coming back left the app showing its empty states until it was killed
-           and reopened: nothing re-read the data when it came back to the front. */
-        boolean now = hasDataAccess();
-        if (now && !hadDataAccess && web != null) {
+           and reopened: nothing re-read the data when it came back to the front.
+           Losing it was worse — the list stayed on screen, and a row from it
+           still dialled a number the app could no longer read. Re-read on any
+           change, in either direction. */
+        if (web != null && accessChanged()) {
             web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
         }
-        hadDataAccess = now;
+        rememberAccess();
     }
 
     @Override

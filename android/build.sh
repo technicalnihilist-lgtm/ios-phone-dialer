@@ -1,12 +1,14 @@
 #!/bin/bash
 set -e
-SDK=/scratch/work/sdk
+SDK=${SDK:-/scratch/work/sdk}
 export JAVA_HOME=$SDK/jdk-17.0.21+9
 export PATH=$JAVA_HOME/bin:$SDK/android-14:$PATH
 PLATFORM=$SDK/android-35/android.jar
 BT=$SDK/android-14
 J="$JAVA_HOME/bin/java -Xmx192m -XX:MaxMetaspaceSize=64m -XX:CompressedClassSpaceSize=32m -XX:ReservedCodeCacheSize=16m -XX:-TieredCompilation -XX:+UseSerialGC -XX:ActiveProcessorCount=1 -Xss512k -XX:-UsePerfData -XX:MaxDirectMemorySize=64m"
-cd /scratch/work/android
+# work from the directory this script lives in: the checkout can be cloned
+# anywhere, and a hard-coded path only ever built the one layout
+cd "$(dirname "$0")"
 
 rm -rf build && mkdir -p build/gen build/classes build/dex
 

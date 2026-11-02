@@ -50,8 +50,13 @@ self.addEventListener("fetch", e => {
     return;
   }
 
+  /* serve the cached copy at once, and refresh it in the background. A plain
+     cache-first answer was never replaced, so an icon or the manifest kept the
+     bytes from the first install until sw.js itself happened to change. */
   e.respondWith(
-    caches.match(req).then(hit => hit || fetch(req).then(store)
-      .catch(() => Response.error()))
+    caches.match(req).then(hit => {
+      const fresh = fetch(req).then(store).catch(() => null);
+      return hit || fresh.then(res => res || Response.error());
+    })
   );
 });

@@ -690,19 +690,19 @@ KEYS.forEach(([d, l], n) => {
   b.dataset.d = d; b.style.setProperty("--n", n);
   b.setAttribute("aria-label", d);
   b.innerHTML = `<b>${d}</b><small>${l}</small>`;
-  /* the long-press flag was a latch: if the finger slid off the key before
-     release no click arrived to clear it, and the next tap on the same key was
-     swallowed. Record when the long press fired and expire it instead. */
+  /* a long press consumes the tap that follows it. The flag is cleared on the
+     next press, not on a clock: holding the key for longer than the old expiry
+     window let the release click through, so a slow long press on "0" dialled
+     "+0". Clearing on pointerdown still covers a press that slid off the key
+     without ever producing a click. */
   b.addEventListener("click", () => {
-    const t = b._lpt;
-    b._lpt = 0;
-    if (t && Date.now() - t < 800) return;
+    if (b._lpt) { b._lpt = 0; return; }
     add(d);
   });
   if (d === "0") {
     let t;
     b.addEventListener("pointerdown", () => {
-      b._lpt = 0; t = setTimeout(() => { b._lpt = Date.now(); add("+"); }, 500);
+      b._lpt = 0; t = setTimeout(() => { b._lpt = 1; add("+"); }, 500);
     });
     ["pointerup","pointerleave","pointercancel"].forEach(e =>
       b.addEventListener(e, () => clearTimeout(t)));
@@ -782,7 +782,21 @@ function findMatch() {
    device does; reading it back after writing the font size forced a synchronous
    layout on every single keystroke. Measure once, re-measure on resize. */
 let numMaxW = 0;
+/* Length of the longest number line known to fit at the base size. Every glyph
+   has a positive width, so any line with fewer characters is narrower than one
+   that already fit — no measuring needed for those. */
+let fitOkLen = 0;
 function fitNumber() {
+  /* measure first: with the keypad hidden clientWidth is 0, and writing the
+     base size before this check left a long number at 40px (clipped) for good
+     the next time that view was shown after a resize */
+  const max = numMaxW || (numMaxW = num.clientWidth);
+  if (!max) return;
+  const text = num.textContent || "";
+  if (text.length <= fitOkLen) {
+    if (num.style.fontSize !== "40px") num.style.fontSize = "40px";
+    return;
+  }
   /* .number animates font-size, so a scrollWidth read straight after writing a
      size measured the *previous* size: the loop below never saw the number
      narrow, and every value long enough to need shrinking collapsed all the way
@@ -791,12 +805,8 @@ function fitNumber() {
   const prevTransition = num.style.transition;
   num.style.transition = "none";
   num.style.fontSize = "40px";
-  const max = numMaxW || (numMaxW = num.clientWidth);
-  if (!max) {   /* keypad hidden: measuring here used to shrink the number to 19px for good */
-    num.style.transition = prevTransition;
-    return;
-  }
   const w = num.scrollWidth;
+  if (w <= max) fitOkLen = text.length;
   if (w > max) {
     /* glyph width scales with font-size, so estimate the fit in one step
        instead of stepping 1px at a time (21 forced reflows per keystroke) */
@@ -845,17 +855,15 @@ function add(c) {
   if (navigator.vibrate) navigator.vibrate(6);
 }
 
-/* same expired-latch rule as the keypad: a long press that ended without a
-   click used to eat the following tap on delete */
+/* same consumed-tap rule as the keypad: holding delete past the old expiry
+   window let the release click through on top of the clear */
 del.addEventListener("click", () => {
-  const t = del._lpt;
-  del._lpt = 0;
-  if (t && Date.now() - t < 900) return;
+  if (del._lpt) { del._lpt = 0; return; }
   value = value.slice(0, -1); render(); bump();
 });
 let hold;
 del.addEventListener("pointerdown", () => {
-  del._lpt = 0; hold = setTimeout(() => { del._lpt = Date.now(); value = ""; render(); bump(); }, 600);
+  del._lpt = 0; hold = setTimeout(() => { del._lpt = 1; value = ""; render(); bump(); }, 600);
 });
 ["pointerup","pointerleave","pointercancel"].forEach(e =>
   del.addEventListener(e, () => clearTimeout(hold)));
@@ -1431,12 +1439,22 @@ render();
 /* real contacts and call history, when running inside the Android app */
 function hydrateNative() {
   if (!window.PhoneNative) return;
-  try {
-    const cs = JSON.parse(PhoneNative.contacts() || "[]");
-    if (cs.length) { people.length = 0; cs.forEach(p => people.push(p)); }
-    const rs = JSON.parse(PhoneNative.callLog() || "[]");
-    if (rs.length) { recents.length = 0; rs.forEach(r => recents.push(r)); }
-  } catch (e) {}
+  /* both lists are replaced even when they come back empty. Keeping the old
+     ones whenever the new read was empty meant that revoking contacts access —
+     or deleting every contact — left the previous list on screen, and a row
+     from it still dialled a number the app could no longer read. A failed
+     parse still leaves the current data alone. */
+  let list = null, log = null;
+  try { list = JSON.parse(PhoneNative.contacts() || "[]"); } catch (e) {}
+  try { log = JSON.parse(PhoneNative.callLog() || "[]"); } catch (e) {}
+  if (Array.isArray(list)) {
+    people.length = 0;
+    list.forEach(p => { if (p) people.push(p); });
+  }
+  if (Array.isArray(log)) {
+    recents.length = 0;
+    log.forEach(r => { if (r) recents.push(r); });
+  }
   buildContactIdx();
   renderFavs();
   /* re-reading the call log used to drop the Recents list back to All while the
@@ -1457,6 +1475,7 @@ function remeasureLayout() {
   remeasure = true;
   tabMids = null;   /* the tab centres are about to move: drop the cached ones */
   numMaxW = 0;      /* and so is the width the number line fits into */
+  fitOkLen = 0;     /* a narrower line fits fewer characters than the last one */
   requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
 }
 addEventListener("resize", remeasureLayout);

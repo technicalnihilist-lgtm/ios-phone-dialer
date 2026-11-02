@@ -93,7 +93,15 @@ public class CallActivity extends Activity {
         a.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                try { a.showCaller(number); } catch (Exception ignored) { }
+                try {
+                    /* the screen now belongs to a different call than the one the
+                       clock was started for: drop the answer state so the ticker
+                       takes the remaining call's own connect time instead of
+                       counting on from the call that just ended */
+                    a.answered = false;
+                    a.startedAt = 0;
+                    a.showCaller(number);
+                } catch (Exception ignored) { }
             }
         });
     }
@@ -354,6 +362,10 @@ public class CallActivity extends Activity {
             Toast.makeText(this, "Recording to " + out.getName(), Toast.LENGTH_SHORT).show();
         } catch (Throwable t) {
             try { r.release(); } catch (Exception ignored) { }
+            /* prepare() creates the file before the recorder can fail, so every
+               blocked attempt left another empty .m4a behind in the app's files
+               directory; nothing was ever written to it */
+            try { out.delete(); } catch (Exception ignored) { }
             recorder = null;
             recording = false;
             recordBtn.setSelected(false);
