@@ -951,7 +951,7 @@ dialtop.addEventListener("pointermove", e => {
 function openMenu(x, y) {
   const menu = $("menu"), r = $("device").getBoundingClientRect();
   menu.classList.add("show");
-  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const w = menu.offsetWidth;   /* only the width is needed; the height read was unused and forced a layout */
   menu.style.left = Math.max(8, Math.min(x - r.left - w / 2, r.width - w - 8)) + "px";
   menu.style.top = Math.max(8, y - r.top + 10) + "px";
   if (navigator.vibrate) navigator.vibrate(6);
@@ -993,6 +993,11 @@ function mark(i) {
   });
 }
 function snap() {
+  /* glide() parks the capsule on the target after 130 ms using offsets it read
+     when it was called. A re-measure inside that window (a resize, the font
+     swap at startup) left the capsule sitting on the old geometry until the
+     next tab change, a few pixels off the tab it was supposed to mark. */
+  clearTimeout(glide.t);
   pill.classList.add("noanim");
   pill.style.left = tabs[cur].offsetLeft + "px";
   pill.style.width = tabs[cur].offsetWidth + "px";
@@ -1103,7 +1108,10 @@ function renderFavs() {
   }
   $("favs").innerHTML = idx.map(i => {
     const p = people[i];
-    return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(p.n.split(" ")[0])}</b><small>mobile</small></button>`;
+    /* a name the device saved with a leading space ("  Ravi Kumar") split into
+       an empty first chunk, so the tile was drawn with no name at all */
+    const first = String(p.n == null ? "" : p.n).trim().split(/\s+/)[0] || "";
+    return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(first)}</b><small>mobile</small></button>`;
   }).join("");
 }
 renderFavs();
@@ -1538,6 +1546,20 @@ function hydrateNative() {
   if (Array.isArray(log)) {
     recents.length = 0;
     log.forEach(r => { if (r) recents.push(r); });
+    /* The local dialled list only covers calls made since the last read, but it
+       was never dropped once the device log knew about them too: Recents drew
+       both rows, so every call placed from inside the app appeared twice — and
+       stayed doubled across launches. The log is the authority (it evicts by
+       recency, so a local call whose number is in the log is in the log), so
+       the local copy goes. */
+    if (recents.length) {
+      const logged = new Set();
+      recents.forEach(r => {
+        const t = r && r.p ? String(r.p.t == null ? "" : r.p.t).replace(/\D/g, "") : "";
+        if (t) logged.add(t);
+      });
+      if (logged.size) dialed = dialed.filter(d => !logged.has(String(d.number).replace(/\D/g, "")));
+    }
   }
   buildContactIdx();
   renderFavs();

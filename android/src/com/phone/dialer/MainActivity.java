@@ -19,6 +19,7 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -71,18 +72,35 @@ public class MainActivity extends Activity {
      */
     private boolean hadContacts, hadCallLog;
 
-    @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
 
-        web = new WebView(this);
-        web.setBackgroundColor(Color.BLACK);
-        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        web.setVerticalScrollBarEnabled(false);
-        web.setHorizontalScrollBarEnabled(false);
+        setContentView(createWebView());
 
-        WebSettings s = web.getSettings();
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+
+        rememberAccess();
+        askPermissions();
+    }
+
+    /**
+     * Builds the single page this app shows and installs it as {@link #web}.
+     * Split out of onCreate() so a dead renderer can be replaced with a fresh
+     * WebView instead of taking the whole process down (see onRenderProcessGone).
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private WebView createWebView() {
+        WebView w = new WebView(this);
+        w.setBackgroundColor(Color.BLACK);
+        w.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        w.setVerticalScrollBarEnabled(false);
+        w.setHorizontalScrollBarEnabled(false);
+
+        WebSettings s = w.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(true);
@@ -92,8 +110,8 @@ public class MainActivity extends Activity {
         s.setDisplayZoomControls(false);
         s.setTextZoom(100);
 
-        web.addJavascriptInterface(new Bridge(), "PhoneNative");
-        web.setWebViewClient(new WebViewClient() {
+        w.addJavascriptInterface(new Bridge(), "PhoneNative");
+        w.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return handoff(url);
@@ -103,18 +121,42 @@ public class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return handoff(request.getUrl().toString());
             }
+
+            /**
+             * The renderer is a separate process and the system kills it when
+             * memory runs low — a large contact list and a live call at the same
+             * time is enough. With no handler here the app process was taken down
+             * with it, so the dialer simply vanished mid-use. Tear the dead view
+             * down and put a fresh one in its place; only the page state (a
+             * half-typed number) is lost.
+             */
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                destroyWebView(view);
+                if (web == view) web = null;
+                if (!isFinishing() && !isDestroyed()) {
+                    setContentView(createWebView());
+                }
+                return true;   /* handled: do not let the system kill the app */
+            }
         });
 
-        web.loadUrl("file:///android_asset/index.html");
-        setContentView(web);
+        w.loadUrl("file:///android_asset/index.html");
+        web = w;
+        return w;
+    }
 
-        getWindow().setStatusBarColor(Color.TRANSPARENT);
-        getWindow().setNavigationBarColor(Color.TRANSPARENT);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
-
-        rememberAccess();
-        askPermissions();
+    /** Tears a WebView down without leaving its renderer, bridge or parent behind. */
+    private void destroyWebView(WebView w) {
+        if (w == null) return;
+        try {
+            w.stopLoading();
+            w.removeJavascriptInterface("PhoneNative");
+            w.setWebViewClient(null);
+            ViewParent parent = w.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(w);
+            w.destroy();
+        } catch (Exception ignored) { }
     }
 
     private void askPermissions() {
@@ -207,17 +249,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (web != null) {
-            try {
-                web.stopLoading();
-                web.removeJavascriptInterface("PhoneNative");
-                web.setWebViewClient(null);
-                ViewParent parent = web.getParent();
-                if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(web);
-                web.destroy();
-            } catch (Exception ignored) { }
-            web = null;
-        }
+        destroyWebView(web);
+        web = null;
         super.onDestroy();
     }
 
