@@ -278,7 +278,11 @@ public class CallActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         String number = intent == null ? null : intent.getStringExtra("number");
-        if (number != null && number.equals(shownNumber)) return;
+        /* This used to bail out when the number matched the one already painted,
+           but an intent only ever arrives here from onCallAdded(): it always
+           means a *new* call, even when the same person is calling back. Bailing
+           left answered/startedAt from the previous call, so the second call's
+           duration carried on counting from the first one's connect time. */
 
         answered = false;
         startedAt = 0;
@@ -302,10 +306,16 @@ public class CallActivity extends Activity {
     private void toggleMute() {
         Call call = DialerInCallService.current;
         if (call == null) return;
-        muted = !muted;
+        boolean next = !muted;
         try {
-            if (DialerInCallService.instance != null) DialerInCallService.instance.setMuted(muted);
-        } catch (Exception ignored) { }
+            if (DialerInCallService.instance != null) DialerInCallService.instance.setMuted(next);
+        } catch (Exception e) {
+            /* The label was flipped before telecom was asked, and nothing syncs
+               mute back afterwards: a rejected request left "unmute" over a call
+               that was never muted for the rest of the call. */
+            return;
+        }
+        muted = next;
         muteBtn.setSelected(muted);
         muteLabel.setText(muted ? "unmute" : "mute");
     }
@@ -324,8 +334,7 @@ public class CallActivity extends Activity {
     }
 
     private void toggleSpeaker() {
-        boolean on = speakerOn();
-        boolean next = !on;
+        boolean next = !speakerOn();
         try {
             if (DialerInCallService.instance != null) {
                 DialerInCallService.instance.setAudioRoute(
@@ -333,7 +342,11 @@ public class CallActivity extends Activity {
             } else if (audio != null) {
                 audio.setSpeakerphoneOn(next);
             }
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            /* same as mute: the 1 Hz refresh would eventually repaint it, but not
+               before the user had already seen the button claim a route it never got */
+            return;
+        }
         speakerBtn.setSelected(next);
         speakerLabel.setText(next ? "speaker on" : "speaker");
     }
@@ -341,11 +354,17 @@ public class CallActivity extends Activity {
     private void toggleHold() {
         Call call = DialerInCallService.current;
         if (call == null) return;
-        onHold = !onHold;
+        boolean next = !onHold;
         try {
-            if (onHold) call.hold();
+            if (next) call.hold();
             else call.unhold();
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            /* hold() throws on a call that does not advertise CAPABILITY_HOLD, and
+               unlike the speaker route nothing ever re-synced the button: it sat on
+               "resume" over a call that was still live on the line. */
+            return;
+        }
+        onHold = next;
         holdBtn.setSelected(onHold);
         holdLabel.setText(onHold ? "resume" : "hold");
     }

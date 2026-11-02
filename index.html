@@ -725,9 +725,21 @@ function fmt(v) {
   return d;
 }
 
+/* A name saved with an accent — "Zoë", "José", "Ünal" — could not be found at
+   all. Its accented letter matched no key, so the T9 digits came out short and
+   never lined up with what was typed, and the lower-cased name still carried the
+   accent so it never equalled the plain letters in the search box either. Fold
+   the diacritics off once, in the caches, and both lookups work. */
+const fold = s => {
+  const t = String(s == null ? "" : s);
+  try {
+    return t.normalize ? t.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : t;
+  } catch (e) { return t; }
+};
+
 /* T9 lookup: match a contact by digits or by the letters on the keys */
 const T9 = {2:"abc",3:"def",4:"ghi",5:"jkl",6:"mno",7:"pqrs",8:"tuv",9:"wxyz"};
-const toDigits = s => s.toLowerCase().split("").map(ch => {
+const toDigits = s => fold(s).toLowerCase().split("").map(ch => {
   for (const k in T9) if (T9[k].includes(ch)) return k;
   return "";
 }).join("");
@@ -750,7 +762,7 @@ const lowCache = new WeakMap(), telCache = new WeakMap();
 function lowerOf(p) {
   let s = lowCache.get(p);
   if (s === undefined) {
-    s = String(p.n == null ? "" : p.n).toLowerCase();
+    s = fold(p.n).toLowerCase();
     lowCache.set(p, s);
   }
   return s;
@@ -1118,22 +1130,37 @@ let contactIdx = [];
    and sorts the same list about twice as fast. */
 const nameCollator = (typeof Intl !== "undefined" && Intl.Collator) ? new Intl.Collator() : null;
 const cmpName = (a, b) => nameCollator ? nameCollator.compare(a, b) : a.localeCompare(b);
+/* The markup last written into #contacts. Rebuilding a few thousand rows of
+   HTML and handing them to innerHTML re-parses and re-lays-out the whole list
+   even when the result is byte-identical to what is already on screen — which is
+   what happened on every hydrate, and on every keystroke typed and then deleted.
+   Nothing else ever writes to #contacts, so an unchanged string means an
+   unchanged list. */
+let contactsHTML = null;
 function buildContactIdx() {
   contactIdx = people.filter(p => p).map(p => {
     const tel = String(p.t == null ? "" : p.t);
+    const name = String(p.n == null ? "" : p.n);
     return {
       p: p,
-      key: String(p.n == null ? "" : p.n).toLowerCase(),
+      key: fold(name).toLowerCase(),
       tel: tel,
       /* the number as it is saved ("(555) 123-4567") and the digits it actually
          dials; search needs the second one */
-      dig: tel.replace(/\D/g, "")
+      dig: tel.replace(/\D/g, ""),
+      /* the section header this row falls under: the name cannot change, so it
+         was pointless rebuilding and upper-casing it for every contact on every
+         keystroke */
+      sec: (name || "#").charAt(0).toUpperCase()
     };
   }).sort((a, b) => cmpName(String(a.p.n == null ? "" : a.p.n),
                             String(b.p.n == null ? "" : b.p.n)));
+  contactsHTML = null;   /* the rows changed: what is on screen is stale */
 }
 function renderContacts(q) {
-  const raw = q || "", needle = raw.toLowerCase();
+  /* the query is folded the same way the stored names are, so typing "josé"
+     finds "José" instead of nothing at all */
+  const raw = q || "", needle = fold(raw).toLowerCase();
   /* a number is stored the way the device saved it, so searching the digits a
      person would dial ("5551234") matched nothing at all */
   const needleDig = needle.replace(/[^0-9]/g, "");
@@ -1142,14 +1169,17 @@ function renderContacts(q) {
     const e = contactIdx[i], p = e.p;
     if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0
         && !(needleDig && e.dig.indexOf(needleDig) >= 0)) continue;
-    const L = String(p.n || "#").charAt(0).toUpperCase();
+    const L = e.sec;
     if (L !== last) { out += `<div class="sec">${L}</div>`; last = L; }
     out += `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
       <span class="t"><b>${esc(p.n)}</b><small>${esc(fmt(e.tel))}</small></span>
     </button>`;
   }
-  $("contacts").innerHTML = out || '<div class="empty">No Contacts</div>';
+  const html = out || '<div class="empty">No Contacts</div>';
+  if (html === contactsHTML) return;   /* nothing to re-parse, nothing to lay out */
+  contactsHTML = html;
+  $("contacts").innerHTML = html;
 }
 buildContactIdx();
 renderContacts("");

@@ -5,9 +5,8 @@ import android.telecom.Call;
 import android.telecom.CallAudioState;
 import android.telecom.InCallService;
 
-import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Owns the in-call experience. This service is only bound by the system when
@@ -28,8 +27,22 @@ public class DialerInCallService extends InCallService {
      */
     public static volatile int audioRoute = CallAudioState.ROUTE_EARPIECE;
 
-    /** Every call the system still has open, not just the most recent one. */
-    private final Set<Call> live = Collections.newSetFromMap(new IdentityHashMap<Call, Boolean>());
+    /**
+     * Every call the system still has open, not just the most recent one, kept in
+     * the order they were added. This used to be a Set built on an IdentityHashMap,
+     * whose iteration order is arbitrary: when the call on screen ended and another
+     * one was still up, the screen fell back to whichever call the hash table
+     * happened to reach first rather than to the one added last.
+     */
+    private final List<Call> live = new ArrayList<Call>();
+
+    /** Removes by identity — Call does not define equals(), and we want no surprises. */
+    private boolean drop(Call call) {
+        for (int i = 0; i < live.size(); i++) {
+            if (live.get(i) == call) { live.remove(i); return true; }
+        }
+        return false;
+    }
 
     @Override
     public void onCreate() {
@@ -66,7 +79,9 @@ public class DialerInCallService extends InCallService {
     @Override
     public void onCallAdded(Call call) {
         super.onCallAdded(call);
-        live.add(call);
+        /* a Set ignored a repeat add for free; a List would keep the duplicate and
+           then hand it back as "the most recent call" after it had ended */
+        if (!live.contains(call)) live.add(call);
         current = call;
 
         String number = numberOf(call);
@@ -84,11 +99,11 @@ public class DialerInCallService extends InCallService {
     @Override
     public void onCallRemoved(Call call) {
         super.onCallRemoved(call);
-        live.remove(call);
+        drop(call);
         if (call == current) {
             /* with a second call still up, the in-call screen belongs to that
                one now — it used to be closed as if every call had ended */
-            current = live.isEmpty() ? null : live.iterator().next();
+            current = live.isEmpty() ? null : live.get(live.size() - 1);
             /* the screen was never told: after the second call hung up the header
                still showed the caller that had just gone, not the one still up */
             if (current != null) CallActivity.showIfOpen(numberOf(current));

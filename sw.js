@@ -29,12 +29,18 @@ self.addEventListener("fetch", e => {
   /* only our own files: third-party responses were being cached for ever */
   if (url.origin !== self.location.origin) return;
 
+  /* Returns a promise for the response, and that promise does not settle until
+     the cache write has finished. The write used to be started here and left
+     floating, so the promise handed to respondWith()/waitUntil() settled as soon
+     as the network answered — the worker was free to be torn down with the put
+     still in flight, which is exactly the half-written cache this was meant to
+     prevent. A failed or non-2xx response is still never cached. */
   const store = res => {
-    if (res && res.ok) {                    /* errors used to be cached as if they were assets */
-      const copy = res.clone();
-      caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
-    }
-    return res;
+    if (!res || !res.ok) return Promise.resolve(res);
+    const copy = res.clone();
+    return caches.open(CACHE)
+      .then(c => c.put(req, copy))
+      .then(() => res, () => res);
   };
 
   if (req.mode === "navigate") {
