@@ -59,7 +59,18 @@ public class CallActivity extends Activity {
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
-            refreshStatus();
+            try {
+                refreshStatus();
+            } catch (Exception ignored) {
+                /* refreshStatus() returns early when a binder read fails, and the
+                   re-post below used to be skipped with it: one exception from
+                   getState() stopped the ticker for good, so the counter froze
+                   and the screen never closed when the call ended. */
+            }
+            /* ... and the re-post itself used to run even after refreshStatus()
+               had asked the ticker to stop, undoing removeCallbacks() and waking
+               the main thread every 500 ms behind a finished screen. */
+            if (isFinishing() || isDestroyed()) return;
             /* Every pass makes two binder calls, one into telecom and one into the
                audio service. Only a call that is still connecting needs a fast
                poll; once it is up and counting, one pass per second is enough.
@@ -256,8 +267,12 @@ public class CallActivity extends Activity {
         onHold = false;
         muted = false;
         /* a recording started on the previous call kept running, and its button
-           still said "stop" over the new caller's name */
-        stopRecordingIfAny();
+           still said "stop" over the new caller's name. Tearing it down inline
+           meant stop() finalising the MP4 and release() shutting the encoder
+           down on the UI thread — tens of milliseconds of jank while the new
+           caller's screen was opening — so it takes the same off-thread path
+           the end-of-call code already uses. */
+        releaseRecorderOffThread();
         if (holdBtn != null) { holdBtn.setSelected(false); holdLabel.setText("hold"); }
         if (muteBtn != null) { muteBtn.setSelected(false); muteLabel.setText("mute"); }
         if (statusView != null) setTextIfChanged(statusView, "connecting…");
@@ -277,8 +292,21 @@ public class CallActivity extends Activity {
         muteLabel.setText(muted ? "unmute" : "mute");
     }
 
+    /**
+     * Where the call audio is actually going. AudioManager.isSpeakerphoneOn()
+     * only reports a route this app set itself, so once the default-dialer role
+     * hands routing to telecom it kept answering "earpiece" — and the 1 Hz
+     * refresh below then un-highlighted the speaker button about a second after
+     * it was tapped. Ask the call service, which is told the real route.
+     */
+    private boolean speakerOn() {
+        if (DialerInCallService.instance != null)
+            return DialerInCallService.audioRoute == CallAudioState.ROUTE_SPEAKER;
+        return audio != null && audio.isSpeakerphoneOn();
+    }
+
     private void toggleSpeaker() {
-        boolean on = audio != null && audio.isSpeakerphoneOn();
+        boolean on = speakerOn();
         boolean next = !on;
         try {
             if (DialerInCallService.instance != null) {
@@ -471,11 +499,9 @@ public class CallActivity extends Activity {
                 break;
         }
         try {
-            if (audio != null) {
-                boolean sp = audio.isSpeakerphoneOn();
-                speakerBtn.setSelected(sp);
-                setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
-            }
+            boolean sp = speakerOn();
+            speakerBtn.setSelected(sp);
+            setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
         } catch (Exception ignored) { }
     }
 
@@ -518,7 +544,10 @@ public class CallActivity extends Activity {
     protected void onDestroy() {
         lookupSeq++;             /* a lookup still in flight must not paint into a dead screen */
         ticker.removeCallbacks(tick);
+        /* cancelling the pending stop without running it left a key tone
+           sounding until the call itself ended; stop it now */
         ticker.removeCallbacks(stopTone);
+        stopTone.run();
         releaseRecorderOffThread();
         if (open == this) open = null;
         super.onDestroy();

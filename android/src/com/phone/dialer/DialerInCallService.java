@@ -2,6 +2,7 @@ package com.phone.dialer;
 
 import android.content.Intent;
 import android.telecom.Call;
+import android.telecom.CallAudioState;
 import android.telecom.InCallService;
 
 import java.util.Collections;
@@ -18,6 +19,15 @@ public class DialerInCallService extends InCallService {
     public static Call current;
     public static DialerInCallService instance;
 
+    /**
+     * The audio route telecom last reported. The in-call screen used to read
+     * AudioManager.isSpeakerphoneOn() instead, which does not follow a route set
+     * through setAudioRoute(): the speaker button un-highlighted itself about a
+     * second after being tapped, on every call, whenever the app held the
+     * default-dialer role.
+     */
+    public static volatile int audioRoute = CallAudioState.ROUTE_EARPIECE;
+
     /** Every call the system still has open, not just the most recent one. */
     private final Set<Call> live = Collections.newSetFromMap(new IdentityHashMap<Call, Boolean>());
 
@@ -28,11 +38,18 @@ public class DialerInCallService extends InCallService {
     }
 
     @Override
+    public void onCallAudioStateChanged(CallAudioState state) {
+        super.onCallAudioStateChanged(state);
+        if (state != null) audioRoute = state.getRoute();
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
         live.clear();
         instance = null;
         current = null;          /* was left pointing at a dead Call after the service died */
+        audioRoute = CallAudioState.ROUTE_EARPIECE;
     }
 
     /** The dialled number behind a Call, or "" when the handle is not readable. */

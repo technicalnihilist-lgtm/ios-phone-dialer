@@ -579,7 +579,7 @@ button{font-family:inherit;color:inherit}
       <div class="searchwrap">
         <label class="search">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
-          <input id="q" type="search" placeholder="Search" autocomplete="off" spellcheck="false">
+          <input id="q" type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false">
         </label>
       </div>
       <div id="contacts"></div>
@@ -702,6 +702,9 @@ KEYS.forEach(([d, l], n) => {
   if (d === "0") {
     let t;
     b.addEventListener("pointerdown", () => {
+      /* a second finger on the same key replaced the handle, so the first timer
+         could no longer be cancelled and still fired its own "+" */
+      clearTimeout(t);
       b._lpt = 0; t = setTimeout(() => { b._lpt = 1; add("+"); }, 500);
     });
     ["pointerup","pointerleave","pointercancel"].forEach(e =>
@@ -712,7 +715,11 @@ KEYS.forEach(([d, l], n) => {
 
 function fmt(v) {
   const d = v.replace(/\D/g, "");
-  if (v.startsWith("+") || /[*#]/.test(v) || d.length > 11) return v;
+  /* only a leading "+" used to survive: one typed on a keyboard, or inserted by
+     holding 0 after a digit, was dropped from the display, so "555+" showed as
+     "555" and "555+8+8" as "(555) 88" — the number on screen was not the number
+     that got dialled. Any "+" now leaves the value unformatted, like * and #. */
+  if (/[*#+]/.test(v) || d.length > 11) return v;
   if (d.length > 6) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
   if (d.length > 3) return `(${d.slice(0,3)}) ${d.slice(3)}`;
   return d;
@@ -863,6 +870,9 @@ del.addEventListener("click", () => {
 });
 let hold;
 del.addEventListener("pointerdown", () => {
+  /* same as the 0 key: an orphaned second timer cleared a number the user had
+     already started typing again */
+  clearTimeout(hold);
   del._lpt = 0; hold = setTimeout(() => { del._lpt = 1; value = ""; render(); bump(); }, 600);
 });
 ["pointerup","pointerleave","pointercancel"].forEach(e =>
@@ -1462,7 +1472,11 @@ function hydrateNative() {
   renderRecents(recentsFilter());
   renderContacts($("q").value || "");
 }
-hydrateNative();
+/* the contact read, the JSON parse and a full re-render of every list used to
+   run inside the page's first script pass, so nothing painted until all of it
+   was parsed, rendered and laid out. Paint the keypad first, fill in on the
+   next task. */
+setTimeout(hydrateNative, 0);
 /* the permission dialog result re-runs this instead of reloading the whole page,
    which used to replay the entrance animations and throw away a typed number */
 window.__phoneHydrate = hydrateNative;

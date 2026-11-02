@@ -53,10 +53,12 @@ self.addEventListener("fetch", e => {
   /* serve the cached copy at once, and refresh it in the background. A plain
      cache-first answer was never replaced, so an icon or the manifest kept the
      bytes from the first install until sw.js itself happened to change. */
+  /* the refresh has to be handed to waitUntil: answering from the cache settles
+     the response straight away, and nothing else then keeps the worker alive,
+     so the cache write could be cut off half way and the stale copy stayed. */
+  const fresh = fetch(req).then(store).catch(() => null);
+  e.waitUntil(fresh);
   e.respondWith(
-    caches.match(req).then(hit => {
-      const fresh = fetch(req).then(store).catch(() => null);
-      return hit || fresh.then(res => res || Response.error());
-    })
+    caches.match(req).then(hit => hit || fresh.then(res => res || Response.error()))
   );
 });
