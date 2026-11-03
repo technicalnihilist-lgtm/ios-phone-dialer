@@ -660,8 +660,18 @@ const voicemails = [];
 const ESC_MAP = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
 const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ESC_MAP[c]);
 const AV_FALLBACK = ["#8e8e93", "#636366"];
-const initials = n => String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean)
-  .map(w => w[0]).join("").slice(0, 2) || "#";
+/* w[0] is a UTF-16 code unit, not a character. A name that starts with an emoji
+   — or any glyph outside the basic plane — was cut in half and drawn as a
+   replacement box in the avatar. Take whole code points, at most two. */
+const initials = n => {
+  const words = String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < words.length && out.length < 2; i++) {
+    const c = Array.from(words[i])[0];
+    if (c) out.push(c);
+  }
+  return out.join("") || "#";
+};
 const avColors = c => (Array.isArray(c) && c.length > 1) ? c : AV_FALLBACK;
 const avHTML = p => {
   const c = avColors(p && p.c);
@@ -946,6 +956,12 @@ document.addEventListener("keydown", e => {
   /* the digit keys refuse to edit the number behind the call screen but
      Backspace did not, so it silently ate digits off the hidden keypad */
   if (cs.classList.contains("show")) return;
+  /* the digits and Backspace are keypad input. Delivered while any other tab is
+     on screen they built up a number nobody could see, which then appeared the
+     next time the keypad was opened — the same defect the overlay guard above
+     fixes, for the rest of the app. A hardware keyboard only types into the
+     keypad while the keypad is the view in front of it. */
+  if (app.dataset.view !== "keypad") return;
   if (/^[0-9*#+]$/.test(e.key)) add(e.key);
   else if (e.key === "Backspace" && value) { value = value.slice(0, -1); render(); bump(); }
 });
@@ -1148,6 +1164,19 @@ tabbar.addEventListener("pointermove", e => {
   pill.style.left = left + "px";
   mark(near(left + w / 2));
 });
+/* A drag that never got its pointerup — the system took the gesture away, the
+   bar lost the capture, or the app went to the background mid-drag — used to
+   leave `drag` set for good. Every later press then returned early at the
+   `if (drag ...)` guard, so the capsule stopped following the finger and stayed
+   frozen in its grabbed, enlarged state until the page was reloaded. Drop the
+   drag and put the capsule back where the current tab actually is. */
+function dropDrag(animate) {
+  if (!drag) return;
+  drag = null;
+  pill.classList.remove("grab");
+  if (animate) { glideTo = -1; glide(cur); }
+  else snap();          /* hidden page: park it, no timers and no transition */
+}
 function release(e) {
   /* the other finger of a two-finger press owns no drag; its release must not
      end the one the first finger is still making */
@@ -1161,7 +1190,11 @@ function release(e) {
   go(i);
 }
 tabbar.addEventListener("pointerup", release);
-tabbar.addEventListener("pointercancel", release);
+/* pointercancel is not a release: the gesture was taken away, no click will
+   follow, and the user never chose a tab — it used to switch to whichever tab
+   the capsule happened to be nearest */
+tabbar.addEventListener("pointercancel", () => dropDrag(true));
+tabbar.addEventListener("lostpointercapture", () => dropDrag(true));
 
 /* ---------------- list rendering ---------------- */
 function renderFavs() {
@@ -1468,6 +1501,9 @@ document.addEventListener("visibilitychange", () => {
     clearTimeout(pressT); pressT = null;
     clearTimeout(hold);
     clearTimeout(zeroHold);
+    /* a finger on the tab bar when the app went away never delivers its
+       pointerup, which left the capsule stuck in its grabbed state */
+    dropDrag(false);
     if (numAnim) { try { numAnim.cancel(); } catch (e) {} numAnim = null; }
     return;
   }

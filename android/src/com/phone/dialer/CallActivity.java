@@ -131,6 +131,7 @@ public class CallActivity extends Activity {
                     a.onHold = false;
                     a.clearMuteOnService();
                     a.muted = false;
+                    if (a.keypadPanel != null) a.keypadPanel.setVisibility(View.GONE);
                     if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
                     if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
                     a.releaseRecorderOffThread();
@@ -294,6 +295,10 @@ public class CallActivity extends Activity {
         onHold = false;
         clearMuteOnService();
         muted = false;
+        /* the DTMF keypad belongs to the call that was on screen: left open it
+           was already showing for a brand-new call, the same state leak the
+           mute, hold and recording state above are reset for */
+        if (keypadPanel != null) keypadPanel.setVisibility(View.GONE);
         /* a recording started on the previous call kept running, and its button
            still said "stop" over the new caller's name. Tearing it down inline
            meant stop() finalising the MP4 and release() shutting the encoder
@@ -430,7 +435,12 @@ public class CallActivity extends Activity {
 
     private void toggleRecord() {
         if (recording) {
-            stopRecordingIfAny();
+            /* stop() finalises the MP4 and release() tears the encoder down, and
+               both block the caller for tens of milliseconds. This path ran them
+               on the UI thread — the very work the end-of-call path already hands
+               to the background executor — so the frame that should have shown
+               "record" again was dropped. Same teardown, off the main thread. */
+            releaseRecorderOffThread();
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -440,8 +450,13 @@ public class CallActivity extends Activity {
         File dir = getExternalFilesDir(null);
         if (dir == null) dir = getFilesDir();
         File out = new File(dir, "call-" + System.currentTimeMillis() + ".m4a");
-        MediaRecorder r = new MediaRecorder();
+        /* the constructor sat outside the try: a MediaRecorder that failed to be
+           created (media server busy or dead, encoder unavailable) threw straight
+           out of the click handler and took the app down, where every other
+           failure on this path is caught and explained with a toast */
+        MediaRecorder r = null;
         try {
+            r = new MediaRecorder();
             r.setAudioSource(MediaRecorder.AudioSource.VOICE_CALL);
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
@@ -457,7 +472,7 @@ public class CallActivity extends Activity {
             recordLabel.setText("stop");
             Toast.makeText(this, "Recording to " + out.getName(), Toast.LENGTH_SHORT).show();
         } catch (Throwable t) {
-            try { r.release(); } catch (Exception ignored) { }
+            if (r != null) { try { r.release(); } catch (Exception ignored) { } }
             /* prepare() creates the file before the recorder can fail, so every
                blocked attempt left another empty .m4a behind in the app's files
                directory; nothing was ever written to it */
@@ -487,28 +502,14 @@ public class CallActivity extends Activity {
         if (granted && !recording) toggleRecord();
     }
 
-    private void stopRecordingIfAny() {
-        if (recorder != null) {
-            boolean stopped = true;
-            try { recorder.stop(); } catch (Exception e) { stopped = false; }
-            try { recorder.release(); } catch (Exception ignored) { }
-            recorder = null;
-            /* stop() failed, so nothing was finalised: the file prepare() made
-               is empty and would sit in the app's files directory for ever.
-               The start-failure path already removes its own leftover. */
-            if (!stopped) deleteRecordFile(recordFile);
-        }
-        recordFile = null;
-        recording = false;
-        resetRecordButton();
-    }
-
     /**
-     * The same teardown for the paths that end the call: onDestroy(), a hang-up
-     * and a remote disconnect. stop() finalises the MP4 and release() tears the
-     * encoder down, and both block for tens of milliseconds on the calling
-     * thread, so they are handed to the background executor instead. No new
-     * recording can start from those paths, so nothing races the release.
+     * The one teardown for every path that ends a recording: the Record button
+     * itself, onDestroy(), a hang-up and a remote disconnect. stop() finalises
+     * the MP4 and release() tears the encoder down, and both block for tens of
+     * milliseconds, so they are handed to the background executor instead of the
+     * UI thread. The handle is dropped here before the work is queued, so a new
+     * recording started straight afterwards is a new MediaRecorder on a
+     * single-threaded executor, and cannot be torn down by this one.
      */
     private void releaseRecorderOffThread() {
         final MediaRecorder r = recorder;
