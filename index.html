@@ -402,6 +402,10 @@ button{font-family:inherit;color:inherit}
    blurred layer — and every backdrop-filter sitting above it — repainting for
    nobody, on battery. Paused there; resumed exactly as it was on return. */
 .app.still::before{animation-play-state:paused}
+/* the in-call sheet is opaque and covers the whole app, so the ambient blobs
+   behind it kept a blurred full-screen layer repainting every frame for the
+   entire length of every call, where nobody could see them */
+.device.calling .app::before{animation-play-state:paused}
 @media (prefers-color-scheme:light){.app::before{opacity:.55}}
 .app{transition:transform .8s var(--spring-soft),filter .5s ease}
 .device.calling .app{transform:scale(.92);filter:brightness(.55)}
@@ -650,7 +654,11 @@ const recents = [];
 
 const voicemails = [];
 
-const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* the replacement table was rebuilt for every character that needed escaping, and
+   every list render escapes every name and number it draws — a fresh object per
+   escaped character, thousands of them for a large address book. Hoisted. */
+const ESC_MAP = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
+const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ESC_MAP[c]);
 const AV_FALLBACK = ["#8e8e93", "#636366"];
 const initials = n => String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean)
   .map(w => w[0]).join("").slice(0, 2) || "#";
@@ -845,6 +853,10 @@ function fitNumber() {
   num.style.transition = prevTransition;
 }
 
+/* the contact the match chip is currently drawn for. Typing the fifth digit of
+   the same person's number rewrote both of its custom properties and both of its
+   text nodes for nothing; the chip only needs repainting when the match moves. */
+let shownMatch = null;
 function render() {
   /* assigning textContent replaces the text node even when the string is
      identical, and that invalidates layout for nothing. render() runs on every
@@ -855,12 +867,15 @@ function render() {
   hint.classList.toggle("show", !!value);
   const m = value ? findMatch() : null;
   matchEl.classList.toggle("show", !!m);
-  if (m) {
-    const mc = avColors(m.c);
-    matchAv.style.setProperty("--a", mc[0]);
-    matchAv.style.setProperty("--b", mc[1]);
-    matchAv.textContent = initials(m.n);
-    matchName.textContent = m.n;
+  if (m !== shownMatch) {
+    shownMatch = m;
+    if (m) {
+      const mc = avColors(m.c);
+      matchAv.style.setProperty("--a", mc[0]);
+      matchAv.style.setProperty("--b", mc[1]);
+      matchAv.textContent = initials(m.n);
+      matchName.textContent = m.n;
+    }
   }
   fitNumber();
 }
@@ -1147,13 +1162,17 @@ function renderFavs() {
 }
 renderFavs();
 
+/* the markup last written into #recents — same rule as contactsHTML below: a
+   re-render that produces the identical string still re-parses and re-lays-out
+   up to eighty rows, and Recents is re-rendered on every hydrate and every dial */
+let recentsHTML = null;
 function renderRecents(filter) {
   const all = dialed
     .map(d => ({ p:{ n:d.name, t:d.number, c:["#8e8e93","#636366"] }, when:d.when, kind:"out", label:"mobile" }))
     .concat(recents.map(r => ({ p: r.p || people[r.i], when:r.when, kind:r.kind, label:r.label })))
     .filter(r => r.p);
   const rows = all.filter(r => filter !== "missed" || r.kind === "missed");
-  $("recents").innerHTML = rows.map(r => {
+  const html = rows.map(r => {
     const p = r.p;
     return `<button class="row ${r.kind}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
@@ -1162,6 +1181,9 @@ function renderRecents(filter) {
       <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
     </button>`;
   }).join("") || `<div class="empty">${filter === "missed" ? "No Missed Calls" : "No Calls"}</div>`;
+  if (html === recentsHTML) return;   /* nothing to re-parse, nothing to lay out */
+  recentsHTML = html;
+  $("recents").innerHTML = html;
 }
 renderRecents("all");
 
@@ -1175,7 +1197,12 @@ function moveSeg(i) {
   const b = seg.querySelectorAll("button")[i];
   segpill.style.left = b.offsetLeft + "px";
   segpill.style.width = b.offsetWidth + "px";
-  seg.querySelectorAll("button").forEach((x, k) => x.classList.toggle("on", k === i));
+  seg.querySelectorAll("button").forEach((x, k) => {
+    x.classList.toggle("on", k === i);
+    /* the selected half was only ever marked by a class, so a screen reader
+       announced two identical buttons and no state */
+    x.setAttribute("aria-pressed", k === i ? "true" : "false");
+  });
 }
 seg.querySelectorAll("button").forEach((b, i) => {
   b.addEventListener("click", () => { moveSeg(i); renderRecents(i ? "missed" : "all"); });
@@ -1223,7 +1250,11 @@ function buildContactIdx() {
       /* the section header this row falls under: the name cannot change, so it
          was pointless rebuilding and upper-casing it for every contact on every
          keystroke */
-      sec: (name || "#").charAt(0).toUpperCase()
+      sec: (name || "#").charAt(0).toUpperCase(),
+      /* the subtitle is the number run through fmt(), which is a regex pass and
+         two slices; it cannot change, and it was rebuilt for every visible row
+         on every keystroke */
+      disp: fmt(tel)
     };
   }).sort((a, b) => cmpName(a.name, b.name));
   contactsHTML = null;   /* the rows changed: what is on screen is stale */
@@ -1244,7 +1275,7 @@ function renderContacts(q) {
     if (L !== last) { out += `<div class="sec">${L}</div>`; last = L; }
     out += `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
-      <span class="t"><b>${esc(p.n)}</b><small>${esc(fmt(e.tel))}</small></span>
+      <span class="t"><b>${esc(p.n)}</b><small>${esc(e.disp)}</small></span>
     </button>`;
   }
   const html = out || '<div class="empty">No Contacts</div>';
@@ -1502,8 +1533,16 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     try { localStorage.setItem("phone.glass", JSON.stringify(G)); } catch (e) {}
   }
   /* the 250 ms save timer was lost when the page was closed or backgrounded
-     right after a drag, so the last slider position was never written */
-  function flushIfPending() { if (saveT !== null) flush(); }
+     right after a drag, so the last slider position was never written.
+     A drag also coalesces its repaint into one animation frame, and a frame that
+     never runs — the page hidden or closed between the last 'input' and the next
+     frame — left that timer unarmed as well, so the drag was lost the same way.
+     G already holds the new value the moment 'input' fires; write it now. */
+  function flushIfPending() {
+    const pending = slideQueued || saveT !== null;
+    slideQueued = false;
+    if (pending) flush();
+  }
   addEventListener("pagehide", flushIfPending);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) flushIfPending();

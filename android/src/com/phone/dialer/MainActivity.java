@@ -292,6 +292,7 @@ public class MainActivity extends Activity {
                 return "[]";
             Map<String, JSONObject> byKey = new LinkedHashMap<>();
             Cursor c = null;
+            boolean failed = false;
             try {
                 c = getContentResolver().query(
                         ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -312,11 +313,21 @@ public class MainActivity extends Activity {
                         o.put("c", colorsFor(name));
                         byKey.put(key, o);
                     }
+                } else {
+                    failed = true;
                 }
             } catch (Exception ignored) {
+                failed = true;
             } finally {
                 if (c != null) c.close();
             }
+            /* A read that blew up is not an empty address book. Answering "[]"
+               here told the page the device had no contacts, and the page then
+               replaced the list it was already showing with nothing — the rows
+               vanished and every one of them stopped being dialable until the
+               next successful read. "null" parses to null, which the page
+               already treats as "keep what you have". */
+            if (failed) return "null";
             List<JSONObject> list = new ArrayList<>(byKey.values());
             Collections.sort(list, new Comparator<JSONObject>() {
                 @Override
@@ -337,6 +348,7 @@ public class MainActivity extends Activity {
             Calendar now = Calendar.getInstance();
             Calendar rowCal = Calendar.getInstance();
             Cursor c = null;
+            boolean failed = false;
             try {
                 c = getContentResolver().query(
                         CallLog.Calls.CONTENT_URI,
@@ -371,11 +383,18 @@ public class MainActivity extends Activity {
                         out.put(row);
                         n++;
                     }
+                } else {
+                    failed = true;
                 }
             } catch (Exception ignored) {
+                failed = true;
             } finally {
                 if (c != null) c.close();
             }
+            /* same rule as contacts(): a failed read must not look like an empty
+               call log, or the Recents list on screen is wiped by a transient
+               provider error */
+            if (failed) return "null";
             return out.toString();
         }
 
