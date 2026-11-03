@@ -398,6 +398,10 @@ button{font-family:inherit;color:inherit}
 .app::before{content:"";position:absolute;left:-20%;right:-20%;bottom:-10%;height:58%;z-index:-1;pointer-events:none;
   background:radial-gradient(42% 50% at 24% 62%,rgba(10,132,255,.38),transparent 70%),radial-gradient(36% 46% at 76% 72%,rgba(191,90,242,.32),transparent 70%);
   filter:blur(12px);animation:drift 14s ease-in-out infinite alternate}
+/* the drift loop is endless by design, but while the page is hidden it kept a
+   blurred layer — and every backdrop-filter sitting above it — repainting for
+   nobody, on battery. Paused there; resumed exactly as it was on return. */
+.app.still::before{animation-play-state:paused}
 @media (prefers-color-scheme:light){.app::before{opacity:.55}}
 .app{transition:transform .8s var(--spring-soft),filter .5s ease}
 .device.calling .app{transform:scale(.92);filter:brightness(.55)}
@@ -684,6 +688,9 @@ try {
   }
 } catch (e) { dialed = []; }
 
+/* the "0" key's long-press timer, kept where the visibility handler can reach it */
+let zeroHold = null;
+
 KEYS.forEach(([d, l], n) => {
   const b = document.createElement("button");
   b.className = "key" + (/[*#]/.test(d) ? " sym" : "");
@@ -700,15 +707,14 @@ KEYS.forEach(([d, l], n) => {
     add(d);
   });
   if (d === "0") {
-    let t;
     b.addEventListener("pointerdown", () => {
       /* a second finger on the same key replaced the handle, so the first timer
          could no longer be cancelled and still fired its own "+" */
-      clearTimeout(t);
-      b._lpt = 0; t = setTimeout(() => { b._lpt = 1; add("+"); }, 500);
+      clearTimeout(zeroHold);
+      b._lpt = 0; zeroHold = setTimeout(() => { b._lpt = 1; add("+"); }, 500);
     });
     ["pointerup","pointerleave","pointercancel"].forEach(e =>
-      b.addEventListener(e, () => clearTimeout(t)));
+      b.addEventListener(e, () => clearTimeout(zeroHold)));
   }
   pad.appendChild(b);
 });
@@ -1175,9 +1181,15 @@ let contactsHTML = null;
 function buildContactIdx() {
   contactIdx = people.filter(p => p).map(p => {
     const tel = String(p.t == null ? "" : p.t);
-    const name = String(p.n == null ? "" : p.n);
+    /* a name the device saved with a leading space ("  Bina Shah") was measured
+       from the wrong character everywhere it mattered: the section header came
+       out as a blank box, and the sort parked the row above the A's. Trim once
+       here and use the trimmed name for the header, the search key and the
+       ordering alike; the row itself still shows the name as it is stored. */
+    const name = String(p.n == null ? "" : p.n).trim();
     return {
       p: p,
+      name: name,
       key: fold(name).toLowerCase(),
       tel: tel,
       /* the number as it is saved ("(555) 123-4567") and the digits it actually
@@ -1188,8 +1200,7 @@ function buildContactIdx() {
          keystroke */
       sec: (name || "#").charAt(0).toUpperCase()
     };
-  }).sort((a, b) => cmpName(String(a.p.n == null ? "" : a.p.n),
-                            String(b.p.n == null ? "" : b.p.n)));
+  }).sort((a, b) => cmpName(a.name, b.name));
   contactsHTML = null;   /* the rows changed: what is on screen is stale */
 }
 function renderContacts(q) {
@@ -1362,9 +1373,17 @@ scheduleClock();
 
 /* nothing on screen needs to tick while the app is in the background */
 document.addEventListener("visibilitychange", () => {
+  app.classList.toggle("still", document.hidden);
   if (document.hidden) {
     clearTimeout(clockT);
     clearInterval(callTimer);
+    /* a finger held on a key when the app went away left its 500/600 ms timer
+       running. It fired behind the hidden page and inserted a "+" into the
+       number — or wiped it — with nothing on screen to show for it. */
+    clearTimeout(pressT); pressT = null;
+    clearTimeout(hold);
+    clearTimeout(zeroHold);
+    if (numAnim) { try { numAnim.cancel(); } catch (e) {} numAnim = null; }
     return;
   }
   tick();
@@ -1527,6 +1546,8 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 /* ---------------- boot ---------------- */
 snap();
 render();
+/* a page can be created already hidden (restored in the background) */
+app.classList.toggle("still", document.hidden);
 
 /* real contacts and call history, when running inside the Android app */
 function hydrateNative() {
@@ -1558,7 +1579,16 @@ function hydrateNative() {
         const t = r && r.p ? String(r.p.t == null ? "" : r.p.t).replace(/\D/g, "") : "";
         if (t) logged.add(t);
       });
-      if (logged.size) dialed = dialed.filter(d => !logged.has(String(d.number).replace(/\D/g, "")));
+      if (logged.size) {
+        const before = dialed.length;
+        dialed = dialed.filter(d => !logged.has(String(d.number).replace(/\D/g, "")));
+        /* only the in-memory list was trimmed, so storage kept every row the log
+           already knew about. They came back — with their old times, at the top —
+           as soon as the log rolled past them. Write the trimmed list back. */
+        if (dialed.length !== before) {
+          try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
+        }
+      }
     }
   }
   buildContactIdx();

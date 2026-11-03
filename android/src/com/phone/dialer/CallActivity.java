@@ -27,7 +27,9 @@ import java.util.Locale;
 
 public class CallActivity extends Activity {
 
-    private static CallActivity open;
+    /* set on the UI thread, read from the telecom binder thread in
+       showIfOpen()/finishIfOpen(); volatile so that read cannot go stale */
+    private static volatile CallActivity open;
 
     private TextView nameView, statusView;
     private ImageView muteBtn, speakerBtn, holdBtn, recordBtn;
@@ -45,6 +47,8 @@ public class CallActivity extends Activity {
     private boolean recording;
     private boolean muted;
     private boolean onHold;
+    /** When hold was last asked for, so a request that never took is not undone mid-flight. */
+    private long holdAskedAt;
     private long startedAt;
     private boolean answered;
     /** Number currently painted in the call header, so a repeated intent does not reset the timer. */
@@ -306,9 +310,13 @@ public class CallActivity extends Activity {
     private void toggleMute() {
         Call call = DialerInCallService.current;
         if (call == null) return;
+        /* without the call service there is nothing that can mute the line, and
+           the request below used to be skipped silently: the label still flipped
+           to "unmute" over a call that was never muted. */
+        if (DialerInCallService.instance == null) return;
         boolean next = !muted;
         try {
-            if (DialerInCallService.instance != null) DialerInCallService.instance.setMuted(next);
+            DialerInCallService.instance.setMuted(next);
         } catch (Exception e) {
             /* The label was flipped before telecom was asked, and nothing syncs
                mute back afterwards: a rejected request left "unmute" over a call
@@ -335,11 +343,13 @@ public class CallActivity extends Activity {
 
     private void toggleSpeaker() {
         boolean next = !speakerOn();
+        /* neither route is available: do not claim the speaker was switched */
+        if (DialerInCallService.instance == null && audio == null) return;
         try {
             if (DialerInCallService.instance != null) {
                 DialerInCallService.instance.setAudioRoute(
                         next ? CallAudioState.ROUTE_SPEAKER : CallAudioState.ROUTE_EARPIECE);
-            } else if (audio != null) {
+            } else {
                 audio.setSpeakerphoneOn(next);
             }
         } catch (Exception e) {
@@ -364,9 +374,15 @@ public class CallActivity extends Activity {
                "resume" over a call that was still live on the line. */
             return;
         }
-        onHold = next;
-        holdBtn.setSelected(onHold);
-        holdLabel.setText(onHold ? "resume" : "hold");
+        holdAskedAt = System.currentTimeMillis();
+        setHoldUi(next);
+    }
+
+    /** Paints the hold control; shared by the tap and the 1 Hz sync below. */
+    private void setHoldUi(boolean held) {
+        onHold = held;
+        if (holdBtn != null) holdBtn.setSelected(held);
+        if (holdLabel != null) holdLabel.setText(held ? "resume" : "hold");
     }
 
     /** TextView.setText() always requests layout, even for the same string. */
@@ -542,9 +558,17 @@ public class CallActivity extends Activity {
                 }
                 long secs = Math.max(0, (System.currentTimeMillis() - startedAt) / 1000);
                 setTextIfChanged(statusView, String.format(Locale.US, "%02d:%02d", secs / 60, secs % 60));
+                /* the button said "resume" over a call that is not on hold — when
+                   it was resumed from somewhere else, or when hold() never took.
+                   A fresh tap gets a moment before it is believed. */
+                if (onHold && System.currentTimeMillis() - holdAskedAt > 1500) setHoldUi(false);
                 break;
             case Call.STATE_HOLDING:
                 setTextIfChanged(statusView, "on hold");
+                /* the call really is held. This screen is often created mid-call
+                   — screen off, activity recreated — with onHold still false, so
+                   the control offered to hold a call that already was. */
+                if (!onHold) setHoldUi(true);
                 break;
             case Call.STATE_DISCONNECTED:
                 releaseRecorderOffThread();
@@ -556,7 +580,9 @@ public class CallActivity extends Activity {
         }
         try {
             boolean sp = speakerOn();
-            speakerBtn.setSelected(sp);
+            /* setSelected() refreshes the drawable state and invalidates even when
+               the value is unchanged, and this ran on every tick of the clock */
+            if (speakerBtn.isSelected() != sp) speakerBtn.setSelected(sp);
             setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
         } catch (Exception ignored) { }
     }

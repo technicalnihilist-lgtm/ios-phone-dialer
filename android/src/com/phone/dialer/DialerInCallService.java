@@ -15,8 +15,11 @@ import java.util.List;
  */
 public class DialerInCallService extends InCallService {
 
-    public static Call current;
-    public static DialerInCallService instance;
+    /* Written on the telecom binder thread, read on the UI thread (and the
+       reverse). Without volatile the in-call screen could read a stale null —
+       or a Call that had already been replaced — and paint nothing at all. */
+    public static volatile Call current;
+    public static volatile DialerInCallService instance;
 
     /**
      * The audio route telecom last reported. The in-call screen used to read
