@@ -129,6 +129,7 @@ public class CallActivity extends Activity {
                        recording started on it kept running, unwatched, under
                        the other caller's name. */
                     a.onHold = false;
+                    a.clearMuteOnService();
                     a.muted = false;
                     if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
                     if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
@@ -291,6 +292,7 @@ public class CallActivity extends Activity {
         answered = false;
         startedAt = 0;
         onHold = false;
+        clearMuteOnService();
         muted = false;
         /* a recording started on the previous call kept running, and its button
            still said "stop" over the new caller's name. Tearing it down inline
@@ -383,6 +385,18 @@ public class CallActivity extends Activity {
         onHold = held;
         if (holdBtn != null) holdBtn.setSelected(held);
         if (holdLabel != null) holdLabel.setText(held ? "resume" : "hold");
+    }
+
+    /**
+     * Mute lives on the InCallService, not on the call: dropping the label alone
+     * left the microphone muted for the next call while its button said "mute",
+     * so the first tap on it only put the label back where it already was.
+     */
+    private void clearMuteOnService() {
+        if (!muted) return;
+        DialerInCallService svc = DialerInCallService.instance;
+        if (svc == null) return;
+        try { svc.setMuted(false); } catch (Exception ignored) { }
     }
 
     /** TextView.setText() always requests layout, even for the same string. */
@@ -573,7 +587,10 @@ public class CallActivity extends Activity {
             case Call.STATE_DISCONNECTED:
                 releaseRecorderOffThread();
                 finish();
-                break;
+                /* the audio-route sync below is a binder call into the audio
+                   service and two view writes, all on a screen that is already
+                   closing */
+                return;
             default:
                 setTextIfChanged(statusView, "connecting…");
                 break;

@@ -4,6 +4,9 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.role.RoleManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -176,17 +179,16 @@ public class MainActivity extends Activity {
         /* the page was reloaded after every permission dialog, throwing away the
            number that had already been typed even when nothing was granted;
            only reload when there is actually new data to read */
-        boolean gained = false;
-        if (results != null) {
-            for (int i = 0; i < results.length; i++) {
-                if (results[i] == PackageManager.PERMISSION_GRANTED) { gained = true; break; }
-            }
-        }
+        /* "gained" used to mean "any of the four permissions came back granted",
+           and the four include CALL_PHONE and RECORD_AUDIO. Granting only those
+           — or only one of them — re-read both providers, re-parsed the JSON,
+           re-sorted every contact and rebuilt every list, none of which can
+           change without contacts or call-log access. */
         /* Re-read contacts and the call log in place. A full reload replayed
            every entrance animation and threw away a number that had already
            been typed — which is exactly what happened on the first launch,
            because the dialog result arrives after the page has loaded. */
-        if (gained) {
+        if (accessChanged()) {
             web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
         }
         /* onResume() runs again right after this result arrives; without this the
@@ -453,6 +455,26 @@ public class MainActivity extends Activity {
                     }
                 }
             });
+        }
+
+        /**
+         * The clipboard, for the page's Paste item. navigator.clipboard is not
+         * implemented by the Android WebView, so that item asked for the clip,
+         * threw, and did nothing at all inside the app. Read it here instead;
+         * the page only calls this from the tap that opened the menu.
+         */
+        @JavascriptInterface
+        public String clipboard() {
+            try {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm == null || !cm.hasPrimaryClip()) return "";
+                ClipData clip = cm.getPrimaryClip();
+                if (clip == null || clip.getItemCount() == 0) return "";
+                CharSequence text = clip.getItemAt(0).coerceToText(MainActivity.this);
+                return text == null ? "" : text.toString();
+            } catch (Exception e) {
+                return "";
+            }
         }
 
         @JavascriptInterface

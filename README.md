@@ -63,14 +63,14 @@ Real iOS metrics: 75pt keys, letters under each digit, T9 contact matching as yo
 
 ## Build the APK
 
-Requires a JDK and Android build-tools. `android/build.sh` does everything: `aapt2` compile and link, `javac`, `d8`, zip, `zipalign`, then `apksigner` with a generated keystore.
+Requires a JDK and Android build-tools. `android/build.sh` does everything: `aapt2` compile and link, `javac`, `d8`, zip, `zipalign`, then `apksigner` with an existing keystore. The script never mints a key: an APK signed with a fresh one would not install over the build already on the device. Point `KEYSTORE` at your key, or the build stops at an unsigned, aligned APK.
 
 ```bash
 cd android
 SDK=/path/to/android-sdk
 export JAVA_HOME=$SDK/jdk
 export PATH=$JAVA_HOME/bin:$SDK/build-tools/34.0.0:$PATH
-bash build.sh          # -> android/Phone-Dialer.apk
+KEYSTORE=/path/to/phone.keystore bash build.sh   # -> android/Phone-Dialer.apk
 ```
 
 The script expects `$SDK/android-35/android.jar` and `$SDK/android-14` (build-tools 34); adjust the two variables at the top for your layout.
@@ -99,7 +99,7 @@ android/                 native app source
 ## Notes
 
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
-- The bundled `apk/Phone-Dialer.apk` is still the 2.4.4 build: the source is at 2.5.4 (versionCode 21) but the signing key was
+- The bundled `apk/Phone-Dialer.apk` is still the 2.4.4 build: the source is at 2.5.5 (versionCode 22) but the signing key was
   not available for this release, and an APK signed with a fresh key would not install over the existing one.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
 - There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
@@ -111,7 +111,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.5.4 (versionCode 21) |
+| Version | 2.5.5 (versionCode 22) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |

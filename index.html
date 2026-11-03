@@ -988,7 +988,16 @@ document.addEventListener("pointerdown", e => {
 $("pasteBtn").addEventListener("click", async () => {
   closeMenu();
   let txt = "";
-  try { txt = await navigator.clipboard.readText(); } catch (err) { txt = ""; }
+  /* navigator.clipboard is not implemented by the Android WebView, so inside the
+     app the Paste item in this menu did nothing at all — it asked for the clip,
+     the call threw, and the handler gave up without a word. Ask the bridge the
+     app already exposes first; the web clipboard stays the fallback. */
+  if (window.PhoneNative && PhoneNative.clipboard) {
+    try { txt = String(PhoneNative.clipboard() || ""); } catch (err) { txt = ""; }
+  }
+  if (!txt) {
+    try { txt = await navigator.clipboard.readText(); } catch (err) { txt = ""; }
+  }
   const clean = (txt || "").replace(/[^\d+*#]/g, "");
   if (clean) { value = clean.slice(0, 20); render(); }
 });
@@ -1098,6 +1107,13 @@ tabs.forEach((t, k) => {
    synchronous layout on every frame. Measure once, at the start of the drag. */
 let dragBarLeft = 0;
 tabbar.addEventListener("pointerdown", e => {
+  /* a right-click, or a second finger landing on the bar while a drag was
+     already running, started its own drag on top of the first: the capsule was
+     grabbed, the release that followed moved the app to whichever tab sat under
+     that pointer, and a context menu that swallowed the pointerup left the
+     capsule stuck in its grabbed state. Only a primary press, and only one at a
+     time, may start a drag. */
+  if (drag || e.button !== 0) return;
   /* a pointerId that is no longer active (a very fast tap whose pointerup was
      already dispatched, a synthesised press from an automation or accessibility
      tool) makes this throw NotFoundError, and the throw took the rest of the
@@ -1105,14 +1121,14 @@ tabbar.addEventListener("pointerdown", e => {
   try { tabbar.setPointerCapture(e.pointerId); } catch (err) { }
   dragBarLeft = tabbar.getBoundingClientRect().left;
   const x = e.clientX - dragBarLeft, i = near(x);
-  drag = { x0: x, moved: false, dx: x - mids()[i], w: 0, last: 0,
+  drag = { id: e.pointerId, x0: x, moved: false, dx: x - mids()[i], w: 0, last: 0,
            min: tabs[0].offsetLeft,
            max: tabs[tabs.length - 1].offsetLeft + tabs[tabs.length - 1].offsetWidth };
   if (Math.abs(pill.offsetLeft + pill.offsetWidth / 2 - mids()[i]) > 2) { glide(i); mark(i); }
   pill.classList.add("grab");
 });
 tabbar.addEventListener("pointermove", e => {
-  if (!drag) return;
+  if (!drag || e.pointerId !== drag.id) return;
   const x = e.clientX - dragBarLeft;
   if (!drag.moved && Math.abs(x - drag.x0) < 5) return;
   if (!drag.moved) {
@@ -1132,8 +1148,10 @@ tabbar.addEventListener("pointermove", e => {
   pill.style.left = left + "px";
   mark(near(left + w / 2));
 });
-function release() {
-  if (!drag) return;
+function release(e) {
+  /* the other finger of a two-finger press owns no drag; its release must not
+     end the one the first finger is still making */
+  if (!drag || (e && e.pointerId !== drag.id)) return;
   /* the capsule's left is animated, so pill.offsetLeft still reads an
      intermediate position here — the finger's last target is what the highlight
      is already showing, and picking from the lagging box landed on the wrong tab */
@@ -1325,6 +1343,14 @@ function stamp() {
   return (d.getHours() % 12 || 12) + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
+/* The number and time of the last dial. A double tap on the green button — or on
+   a row, or on the match chip — placed two calls: two intents handed to telecom
+   and two identical rows in Recents, because nothing said the first tap was
+   already being acted on. The second tap of a double tap lands long before any
+   call it started could have ended. */
+let lastDial = "", lastDialAt = 0;
+const DIAL_REPEAT_MS = 1200;
+
 function placeCall(number, name) {
   const raw = String(number == null ? "" : number);
   const d = raw.replace(/[^\d+*#]/g, "");
@@ -1333,6 +1359,9 @@ function placeCall(number, name) {
      left a "+" row in Recents. startCall() already refused this; the path that
      dials on a real device did not. */
   if (!d || !/[0-9]/.test(d)) return;
+  const now = Date.now();
+  if (d === lastDial && now - lastDialAt < DIAL_REPEAT_MS) return;
+  lastDial = d; lastDialAt = now;
   dialed.unshift({ number: d, name: name || fmt(raw), when: stamp() });
   dialed = dialed.slice(0, 40);
   try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
@@ -1624,11 +1653,18 @@ function hydrateNative() {
   let list = null, log = null;
   try { list = JSON.parse(PhoneNative.contacts() || "[]"); } catch (e) {}
   try { log = JSON.parse(PhoneNative.callLog() || "[]"); } catch (e) {}
-  if (Array.isArray(list)) {
+  const freshPeople = Array.isArray(list), freshLog = Array.isArray(log);
+  /* "null" from either read means the provider threw, not that the device has
+     nothing. Both lists then keep what they had — and there is nothing on screen
+     to redraw either, yet the contact index was re-sorted, the favourites
+     rebuilt and the whole Recents list re-rendered (and its cached markup
+     thrown away) for a read that changed nothing at all. */
+  if (!freshPeople && !freshLog) return;
+  if (freshPeople) {
     people.length = 0;
     list.forEach(p => { if (p) people.push(p); });
   }
-  if (Array.isArray(log)) {
+  if (freshLog) {
     recents.length = 0;
     log.forEach(r => { if (r) recents.push(r); });
     /* The local dialled list only covers calls made since the last read, but it
@@ -1655,8 +1691,12 @@ function hydrateNative() {
       }
     }
   }
-  buildContactIdx();
-  renderFavs();
+  /* the index, the tiles and the Contacts markup are built from people alone, so
+     a log-only refresh leaves them exactly as they were */
+  if (freshPeople) {
+    buildContactIdx();
+    renderFavs();
+  }
   /* re-reading the call log used to drop the Recents list back to All while the
      Missed pill stayed selected, so the filtered list showed outgoing calls */
   renderRecents(recentsFilter());
