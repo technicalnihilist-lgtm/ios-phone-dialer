@@ -62,6 +62,17 @@ public class CallActivity extends Activity {
     private static final java.util.concurrent.ExecutorService LOOKUPS =
             java.util.concurrent.Executors.newSingleThreadExecutor();
 
+    /**
+     * Recording teardown gets a thread of its own. stop() blocks while it
+     * finalises the MP4 — on some encoders for several hundred milliseconds — and
+     * it was queued on LOOKUPS, the same single thread the caller-name lookup
+     * runs on: hanging up and then receiving the next call put that call's
+     * PhoneLookup behind the old recording's teardown, so the new caller's name
+     * appeared late over a screen that had already opened.
+     */
+    private static final java.util.concurrent.ExecutorService RECORDER =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
     /** Guards against an out-of-order lookup painting the previous caller's name. */
     private int lookupSeq;
 
@@ -181,6 +192,15 @@ public class CallActivity extends Activity {
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         /* volume keys adjusted the media stream during a call, not the call stream */
         setVolumeControlStream(AudioManager.STREAM_VOICE_CALL);
+
+        /* This screen is re-created mid-call by a display-size or font-size
+           change, and the new instance used to start with muted = false whatever
+           the line was doing. Take the state the service is holding, so the
+           button matches the microphone and the next call still gets its mute
+           cleared. */
+        muted = DialerInCallService.muted;
+        if (muteBtn != null) muteBtn.setSelected(muted);
+        if (muteLabel != null) muteLabel.setText(muted ? "unmute" : "mute");
 
         showCaller(getIntent() == null ? "" : getIntent().getStringExtra("number"));
 
@@ -331,6 +351,7 @@ public class CallActivity extends Activity {
             return;
         }
         muted = next;
+        DialerInCallService.muted = next;
         muteBtn.setSelected(muted);
         muteLabel.setText(muted ? "unmute" : "mute");
     }
@@ -402,6 +423,8 @@ public class CallActivity extends Activity {
         DialerInCallService svc = DialerInCallService.instance;
         if (svc == null) return;
         try { svc.setMuted(false); } catch (Exception ignored) { }
+        /* the service's copy is what a re-created screen reads back */
+        DialerInCallService.muted = false;
     }
 
     /** TextView.setText() always requests layout, even for the same string. */
@@ -519,7 +542,7 @@ public class CallActivity extends Activity {
         recording = false;
         resetRecordButton();
         if (r == null) return;
-        LOOKUPS.execute(new Runnable() {
+        RECORDER.execute(new Runnable() {
             @Override
             public void run() {
                 boolean stopped = true;

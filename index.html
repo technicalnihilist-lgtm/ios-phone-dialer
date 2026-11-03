@@ -1174,6 +1174,13 @@ function dropDrag(animate) {
   if (!drag) return;
   drag = null;
   pill.classList.remove("grab");
+  /* the drag moved the highlight along with the finger — pointermove calls
+     mark() on every frame — and the release that would have switched the view
+     never arrived. The capsule was sent back to cur, but the tab bar kept the
+     tab the finger had reached marked .on and aria-selected: the bar pointed at
+     a tab that was not the one on screen, and a screen reader announced that
+     tab as the current one. Put the highlight back where the view actually is. */
+  mark(cur);
   if (animate) { glideTo = -1; glide(cur); }
   else snap();          /* hidden page: park it, no timers and no transition */
 }

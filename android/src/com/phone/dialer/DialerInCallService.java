@@ -31,6 +31,18 @@ public class DialerInCallService extends InCallService {
     public static volatile int audioRoute = CallAudioState.ROUTE_EARPIECE;
 
     /**
+     * Whether the microphone was muted by the last request the in-call screen
+     * made. That screen keeps its own copy for the button, but it is re-created
+     * on a display-size or font-size change (and by the system under memory
+     * pressure), and the new instance always started with muted = false: the
+     * button claimed a call that was muted was not, and — worse —
+     * clearMuteOnService() then decided there was nothing to undo when the next
+     * call arrived, so that call came up muted behind a button that said
+     * "mute". The state lives with the service, which outlives the screen.
+     */
+    public static volatile boolean muted;
+
+    /**
      * Every call the system still has open, not just the most recent one, kept in
      * the order they were added. This used to be a Set built on an IdentityHashMap,
      * whose iteration order is arbitrary: when the call on screen ended and another
@@ -51,6 +63,18 @@ public class DialerInCallService extends InCallService {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        /* audioRoute started at earpiece and was only ever written by
+           onCallAudioStateChanged(), so the in-call screen read "earpiece" until
+           telecom next *changed* the route. This service is often bound in the
+           middle of a call — it was re-created, or the call was already up and on
+           speaker — and the speaker button then showed itself as off over a call
+           that was on speaker, and the first tap sent ROUTE_EARPIECE: the button
+           in the wrong state also asked for the wrong thing. Read the route that
+           is actually in force when the service comes up. */
+        try {
+            CallAudioState state = getCallAudioState();
+            if (state != null) audioRoute = state.getRoute();
+        } catch (Exception ignored) { }
     }
 
     @Override
@@ -66,6 +90,7 @@ public class DialerInCallService extends InCallService {
         instance = null;
         current = null;          /* was left pointing at a dead Call after the service died */
         audioRoute = CallAudioState.ROUTE_EARPIECE;
+        muted = false;           /* the line it described is gone with the service */
     }
 
     /** The dialled number behind a Call, or "" when the handle is not readable. */
