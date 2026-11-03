@@ -144,7 +144,7 @@ button{font-family:inherit;color:inherit}
 }
 .key.sym b{font-size:calc(var(--k)*.58);padding-top:5px}
 .key.sym small{visibility:hidden}
-.key:active,.key.press{background:var(--fill-press);transform:scale(1.055)}
+.key:active{background:var(--fill-press);transform:scale(1.055)}
 .key:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
 
 .callrow{
@@ -419,7 +419,7 @@ button{font-family:inherit;color:inherit}
 
 /* press = squash, release = spring back */
 .key{transition:background .4s ease,transform .75s var(--spring)}
-.key:active,.key.press{transform:scale(.9);transition:background 0s,transform .12s ease-out}
+.key:active{transform:scale(.9);transition:background 0s,transform .12s ease-out}
 .call{transition:filter .3s,transform .75s var(--spring)}
 .call:active{transform:scale(.88);transition:filter 0s,transform .12s ease-out}
 .fav,.cs-end,.hdr button,.addnum,.match{transition:transform .75s var(--spring),background .3s,opacity .3s}
@@ -846,7 +846,11 @@ function fitNumber() {
 }
 
 function render() {
-  num.textContent = fmt(value);
+  /* assigning textContent replaces the text node even when the string is
+     identical, and that invalidates layout for nothing. render() runs on every
+     keystroke, and again after every data load, every dial and every delete. */
+  const text = fmt(value);
+  if (num.textContent !== text) num.textContent = text;
   del.classList.toggle("show", !!value);
   hint.classList.toggle("show", !!value);
   const m = value ? findMatch() : null;
@@ -1004,13 +1008,26 @@ function snap() {
      swap at startup) left the capsule sitting on the old geometry until the
      next tab change, a few pixels off the tab it was supposed to mark. */
   clearTimeout(glide.t);
+  glideTo = -1;   /* placed by hand: the next glide must not be skipped */
   pill.classList.add("noanim");
   pill.style.left = tabs[cur].offsetLeft + "px";
   pill.style.width = tabs[cur].offsetWidth + "px";
   void pill.offsetWidth;
   pill.classList.remove("noanim");
 }
+/* Which tab the capsule is on its way to. One tap reaches glide() more than
+   once — the pointerdown on the bar starts the move, the pointerup that releases
+   it calls go(), and the click that follows calls go() again — and every repeat
+   read pill.offsetLeft while the capsule was mid-flight, so it restarted the
+   whole two-step move from wherever the capsule happened to be: two style
+   writes, two forced layouts and two timers per tap for a capsule that was
+   already heading for that exact tab. A glide to the tab it is already going to
+   is now skipped; the drag below clears this, because a drag moves the capsule
+   by hand and every release after it needs a real glide. */
+let glideTo = -1;
 function glide(i) {
+  if (i === glideTo) return;
+  glideTo = i;
   const t = tabs[i], fl = pill.offsetLeft, fr = fl + pill.offsetWidth,
         tl = t.offsetLeft, tr = tl + t.offsetWidth;
   clearTimeout(glide.t);
@@ -1041,6 +1058,9 @@ function showView(i) {
   clearTimeout(showView.t);
   showView.t = setTimeout(() => { app.classList.remove(d); old.classList.remove("leaving"); }, 1200);
   if (NAMES[i] === "recents") syncSeg();
+  /* the Contacts list is built the first time the tab is actually shown: see
+     hydrateNative(). contactsHTML is null whenever the rows are stale. */
+  else if (NAMES[i] === "contacts" && contactsHTML === null) renderContacts($("q").value || "");
   /* the keypad can be resized while it is off screen — the soft keyboard opening
      over the contacts search, a window resize — and fitNumber() cannot measure a
      hidden line, because clientWidth is 0: it gives up and leaves the cached
@@ -1063,7 +1083,11 @@ tabs.forEach((t, k) => {
    synchronous layout on every frame. Measure once, at the start of the drag. */
 let dragBarLeft = 0;
 tabbar.addEventListener("pointerdown", e => {
-  tabbar.setPointerCapture(e.pointerId);
+  /* a pointerId that is no longer active (a very fast tap whose pointerup was
+     already dispatched, a synthesised press from an automation or accessibility
+     tool) makes this throw NotFoundError, and the throw took the rest of the
+     handler with it: no drag was recorded and the capsule did not move at all */
+  try { tabbar.setPointerCapture(e.pointerId); } catch (err) { }
   dragBarLeft = tabbar.getBoundingClientRect().left;
   const x = e.clientX - dragBarLeft, i = near(x);
   drag = { x0: x, moved: false, dx: x - mids()[i], w: 0, last: 0,
@@ -1078,6 +1102,7 @@ tabbar.addEventListener("pointermove", e => {
   if (!drag.moved && Math.abs(x - drag.x0) < 5) return;
   if (!drag.moved) {
     drag.moved = true;
+    glideTo = -1;   /* the capsule is under the finger now, not gliding */
     clearTimeout(glide.t);
     pill.classList.add("noanim");
     pill.style.width = tabs[0].offsetWidth + "px";
@@ -1596,7 +1621,13 @@ function hydrateNative() {
   /* re-reading the call log used to drop the Recents list back to All while the
      Missed pill stayed selected, so the filtered list showed outgoing calls */
   renderRecents(recentsFilter());
-  renderContacts($("q").value || "");
+  /* Building the Contacts list is the most expensive thing on the page — a few
+     thousand rows is over a hundred milliseconds of HTML parsing, and it blocks
+     the first paint after every hydrate (app resume, a permission change). It
+     was rebuilt even while the Contacts tab was off screen, and buildContactIdx()
+     has already marked it stale, so it is now built when the tab is opened —
+     or straight away if that tab is the one on screen. */
+  if (app.dataset.view === "contacts") renderContacts($("q").value || "");
   /* the keypad was never repainted after a data load. A number typed while the
      contacts were still being read — or before the permission result arrived —
      therefore showed no contact match under it, and kept the font size it had

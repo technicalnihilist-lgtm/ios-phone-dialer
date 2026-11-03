@@ -41,8 +41,8 @@ On first launch it asks for contacts, call log, phone and microphone permissions
 
 | Feature | Android app | Browser |
 | --- | --- | --- |
-| Real contacts from the device | yes (`READ_CONTACTS`) | sample data |
-| Real call history | yes (`READ_CALL_LOG`) | sample data |
+| Real contacts from the device | yes (`READ_CONTACTS`) | empty state — no sample data |
+| Real call history | yes (`READ_CALL_LOG`) | empty state — no sample data |
 | Places real calls | yes (`CALL_PHONE`) | hands off to `tel:` |
 | Speaker / mute / hold | yes, with the default-dialer role | simulated |
 | DTMF keypad mid-call | yes | simulated |
@@ -99,7 +99,7 @@ android/                 native app source
 ## Notes
 
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
-- The bundled `apk/Phone-Dialer.apk` is still the 2.4.4 build: the source is at 2.5.2 (versionCode 19) but the signing key was
+- The bundled `apk/Phone-Dialer.apk` is still the 2.4.4 build: the source is at 2.5.3 (versionCode 20) but the signing key was
   not available for this release, and an APK signed with a fresh key would not install over the existing one.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
 - There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
@@ -111,7 +111,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.5.2 (versionCode 19) |
+| Version | 2.5.3 (versionCode 20) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |
