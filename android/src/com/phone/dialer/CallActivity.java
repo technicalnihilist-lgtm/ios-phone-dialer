@@ -153,13 +153,21 @@ public class CallActivity extends Activity {
     }
 
     public static void finishIfOpen() {
-        if (open != null) {
-            open.runOnUiThread(new Runnable() {
+        /* The instance that was checked has to be the instance that is
+           finished. This used to re-read the static field inside the posted
+           runnable, so a screen created between the post and its run — a call
+           arriving just as the previous one ended — was the one that got
+           finished: the live call was left with no in-call screen, and since
+           the app posts no ongoing-call notification there was no way back to
+           its controls or to hang it up. */
+        final CallActivity a = open;
+        if (a != null) {
+            a.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        open.releaseRecorderOffThread();
-                        open.finish();
+                        a.releaseRecorderOffThread();
+                        a.finish();
                     } catch (Exception ignored) { }
                 }
             });

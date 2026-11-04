@@ -305,8 +305,20 @@ public class MainActivity extends Activity {
            Losing it was worse — the list stayed on screen, and a row from it
            still dialled a number the app could no longer read. Re-read on any
            change, in either direction. */
-        if (web != null && accessChanged()) {
-            web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+        if (web != null) {
+            if (accessChanged()) {
+                web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+            } else if (pageReady) {
+                /* The call log was read at boot and when the permission state
+                   changed, and never again. A call that arrived while the app
+                   was open — or one placed from any other app — was missing
+                   from Recents until the process was killed and reopened, and
+                   a missed call is the one row a dialer must not lose. Ask for
+                   the log alone on the way back to the front: one provider
+                   query and forty rows, where re-reading contacts as well
+                   would be the expensive half of the hydrate for no reason. */
+                web.evaluateJavascript("window.__phoneLog&&window.__phoneLog()", null);
+            }
         }
         rememberAccess();
     }
@@ -369,7 +381,14 @@ public class MainActivity extends Activity {
                     while (c.moveToNext()) {
                         String name = c.getString(0);
                         String number = c.getString(1);
-                        if (name == null || number == null) continue;
+                        if (number == null) continue;
+                        /* A Phone row whose DISPLAY_NAME comes back null or blank
+                           — some providers answer that for a number saved without
+                           a name — was dropped from the list altogether: the
+                           contact existed, was dialable, and simply never
+                           appeared. callLog() has always fallen back to the
+                           number for exactly this case; do the same here. */
+                        if (name == null || name.trim().isEmpty()) name = number;
                         String key = name + "|" + NON_DIAL.matcher(number).replaceAll("");
                         if (byKey.containsKey(key)) continue;
                         JSONObject o = new JSONObject();

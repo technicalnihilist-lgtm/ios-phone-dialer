@@ -1733,8 +1733,11 @@ render();
 /* a page can be created already hidden (restored in the background) */
 app.classList.toggle("still", document.hidden);
 
-/* real contacts and call history, when running inside the Android app */
-function hydrateNative() {
+/* real contacts and call history, when running inside the Android app.
+   logOnly re-reads the call log on its own: that is the cheap half of this —
+   one provider query and forty rows — and it is the half that goes stale while
+   the app is open, because contacts only change when the user changes them. */
+function hydrateNative(logOnly) {
   if (!window.PhoneNative) return;
   /* both lists are replaced even when they come back empty. Keeping the old
      ones whenever the new read was empty meant that revoking contacts access —
@@ -1742,7 +1745,9 @@ function hydrateNative() {
      from it still dialled a number the app could no longer read. A failed
      parse still leaves the current data alone. */
   let list = null, log = null;
-  try { list = JSON.parse(PhoneNative.contacts() || "[]"); } catch (e) {}
+  if (!logOnly) {
+    try { list = JSON.parse(PhoneNative.contacts() || "[]"); } catch (e) {}
+  }
   try { log = JSON.parse(PhoneNative.callLog() || "[]"); } catch (e) {}
   const freshPeople = Array.isArray(list), freshLog = Array.isArray(log);
   /* "null" from either read means the provider threw, not that the device has
@@ -1812,6 +1817,11 @@ setTimeout(hydrateNative, 0);
 /* the permission dialog result re-runs this instead of reloading the whole page,
    which used to replay the entrance animations and throw away a typed number */
 window.__phoneHydrate = hydrateNative;
+/* Called on every return to the foreground: the call log is the list that goes
+   stale there. A call that came in while the app was open — or one placed from
+   another app — used to be missing from Recents until the process was killed
+   and reopened, which is the one thing a dialer must not lose. */
+window.__phoneLog = function () { hydrateNative(true); };
 /* A tel: link handed to the app from anywhere else in the system. The manifest
    has always advertised ACTION_DIAL, but the activity behind it finished without
    ever reading the intent, so tapping a phone number in a message, a browser or
