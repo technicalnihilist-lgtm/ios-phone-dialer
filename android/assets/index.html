@@ -1534,6 +1534,16 @@ $("q").addEventListener("input", e => {
   qQueued = true;
   requestAnimationFrame(() => { qQueued = false; renderContacts(qValue); });
 });
+/* A frame that never runs — the page hidden between the last keystroke and the
+   next frame — left qQueued set for good, and the guard above then swallowed
+   every later keystroke: the Contacts list stopped following the search box for
+   the rest of the session. The glass sliders already treat a lost frame this
+   way; do the same here, from the one place that knows the page is back. */
+function flushSearch() {
+  if (!qQueued) return;
+  qQueued = false;
+  renderContacts($("q").value || "");
+}
 
 const vmRows = voicemails.filter(v => people[v.i]);
 $("voicemail").innerHTML = vmRows.length ? vmRows.map(v => {
@@ -1665,6 +1675,13 @@ function startCall(number, person) {
 }
 function endCall() {
   clearInterval(callTimer); clearTimeout(startCall.t);
+  /* The double-tap guard below only exists to stop one tap being acted on
+     twice. It remembered the last number for 1.2 s, which also swallowed a
+     real request: a call placed and ended at once — a misdial — could not be
+     placed again from the same row until that window ran out, with nothing on
+     screen to say why. A double tap cannot span a call that has ended, so the
+     guard starts over here. */
+  lastDial = "";
   document.querySelectorAll(".cs-btn.on").forEach(b => {
     b.classList.remove("on");
     b.setAttribute("aria-pressed", "false");   /* the state above was cleared */
@@ -1731,6 +1748,14 @@ document.addEventListener("visibilitychange", () => {
   }
   tick();
   scheduleClock();
+  flushSearch();
+  /* A resize that landed while the page was hidden armed remeasureLayout()'s
+     one-frame coalescer and the frame never ran, so its guard then ignored
+     every later resize for the rest of the session: the tab capsule and the
+     number line kept the geometry they had when the page went away. The flag
+     is dropped and the measurement taken again, now that frames run. */
+  remeasure = false;
+  remeasureLayout();
   if (cs.classList.contains("show") && callStartedAt) startCallTimer();
 });
 
@@ -2036,7 +2061,10 @@ function remeasureLayout() {
   requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
 }
 addEventListener("resize", remeasureLayout);
-if (document.fonts) document.fonts.ready.then(remeasureLayout);
+/* fonts.ready is a promise from an optional API: a WebView that answers it with
+   an exception used to take the last statement of this script with it, and the
+   All/Missed capsule stayed unpositioned until Recents was opened by hand. */
+try { if (document.fonts) document.fonts.ready.then(remeasureLayout); } catch (e) { }
 syncSeg();
 </script>
 </body>

@@ -134,7 +134,15 @@ public class MainActivity extends Activity {
                so instead of crashing. */
         }
         if (view == null) {
+            /* Nothing was ever installed as the content view, so this activity
+               was left on screen as an empty black window: no page, no keypad,
+               nothing to tap — and because everything below this line is
+               skipped, not even the permission request that could have brought
+               the app to life. It sat in Recents until the user backed out of
+               it. The renderer-restart path below already says the same thing
+               and then closes; say it and close here too. */
             toast("Phone needs the Android System WebView — enable or reinstall it in Settings");
+            finish();
             return;
         }
         setContentView(view);
@@ -206,8 +214,17 @@ public class MainActivity extends Activity {
 
             @Override
             public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                /* A renderer can also die for a view this activity has already
+                   thrown away — the one an earlier restart tore down. Nothing
+                   on screen belonged to it, yet the code below still built a
+                   replacement and installed it: the healthy page was replaced,
+                   the number being typed on it was lost and every contact was
+                   read again, for a view nobody was looking at. Decide first,
+                   then clean up. */
+                final boolean current = (view == web);
                 destroyWebView(view);
-                if (web == view) web = null;
+                if (!current) return true;   /* handled: not the page on screen */
+                web = null;
                 /* The page that comes back is a brand-new document: the contact
                    list, the call log and the cached index all went with the dead
                    renderer, and nothing re-read them for the new one. The app
@@ -418,7 +435,19 @@ public class MainActivity extends Activity {
                    the log alone on the way back to the front: one provider
                    query and forty rows, where re-reading contacts as well
                    would be the expensive half of the hydrate for no reason. */
-                web.evaluateJavascript("window.__phoneLog&&window.__phoneLog()", null);
+                /* Guarded like every other bridge call in this class. The
+                   renderer can be gone between the null check above and this
+                   line — it died while the app was in the background, or the
+                   view was destroyed under us — and an exception thrown out of
+                   onResume takes the app down on the way back to the
+                   foreground, which is the one moment a dialer must survive.
+                   A full hydrate is queued instead: it is the read this call
+                   was only the cheap half of. */
+                try {
+                    web.evaluateJavascript("window.__phoneLog&&window.__phoneLog()", null);
+                } catch (Exception e) {
+                    requestHydrate();
+                }
             }
         }
         rememberAccess();

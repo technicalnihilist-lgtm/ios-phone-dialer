@@ -136,6 +136,19 @@ public class DialerInCallService extends InCallService {
                still showed the caller that had just gone, not the one still up */
             if (current != null) CallActivity.showIfOpen(numberOf(current));
         }
-        if (live.isEmpty()) CallActivity.finishIfOpen();
+        if (live.isEmpty()) {
+            /* The call session is over, and with it the two pieces of state the
+               service was holding for it. Telecom drops the mute and the audio
+               route when the last call goes, but these fields are this app's own
+               record of what it last asked for, and they outlived the call: the
+               next call then opened with its mute button reading "unmute" over a
+               line nobody had muted — so the first tap on it only put the label
+               back — and with the speaker button lit for a route the new call was
+               not on. onDestroy() already resets both for exactly this reason;
+               do it at the moment the state they describe stops existing. */
+            muted = false;
+            audioRoute = CallAudioState.ROUTE_EARPIECE;
+            CallActivity.finishIfOpen();
+        }
     }
 }
