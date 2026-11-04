@@ -14,7 +14,7 @@
 <title>Phone</title>
 <style>
 :root{
-  --bg:#000;--label:#fff;--label2:rgba(235,235,245,.6);--label3:rgba(235,235,245,.3);
+  --bg:#000;--label:#fff;--label2:rgba(235,235,245,.6);
   --fill:rgba(120,120,128,.32);--fill-press:rgba(120,120,128,.52);
   --sep:rgba(84,84,88,.65);--blue:#0a84ff;--green:#30d158;--red:#ff453a;
   --card:#1c1c1e;--glassbg:rgba(44,44,48,.62);--glassline:rgba(255,255,255,.12);
@@ -27,7 +27,7 @@
 }
 @media (prefers-color-scheme:light){
   :root{
-    --bg:#fff;--label:#000;--label2:rgba(60,60,67,.6);--label3:rgba(60,60,67,.3);
+    --bg:#fff;--label:#000;--label2:rgba(60,60,67,.6);
     --fill:rgba(120,120,128,.19);--fill-press:rgba(120,120,128,.32);
     --sep:rgba(60,60,67,.25);--blue:#007aff;--green:#34c759;--red:#ff3b30;
     --card:#f2f2f7;--glassbg:rgba(248,248,250,.72);--glassline:rgba(0,0,0,.07);
@@ -654,6 +654,13 @@ const recents = [];
 
 const voicemails = [];
 
+/* A generation number for the contact data: bumped by every rebuild of the
+   search index, which is the only thing that can change what the book contains.
+   Everything derived from the book — the Contacts markup, the keypad's contact
+   match — is keyed on it, so a cached answer can never outlive the data it came
+   from. */
+let contactGen = 0;
+
 /* the replacement table was rebuilt for every character that needed escaping, and
    every list render escapes every name and number it draws — a fresh object per
    escaped character, thousands of them for a large address book. Hoisted. */
@@ -843,9 +850,20 @@ function telOf(p) {
   return s;
 }
 
+/* The answer depends on the typed number and on the address book, and on
+   nothing else — so a repeat question can be answered from the last one. Three
+   paths ask it for the same number in a row: render() draws the chip, the green
+   button then asks again before dialling, and the chip's own tap asks a third
+   time. On a 3000-contact book that is a full scan of the book each time.
+   contactGen moves whenever the index is rebuilt, which is the only way people[]
+   can change. */
+let matchForValue = null, matchForGen = -1, matchFound = null;
 function findMatch() {
+  if (value === matchForValue && contactGen === matchForGen) return matchFound;
+  matchForValue = value;
+  matchForGen = contactGen;
   const d = value.replace(/\D/g, "");
-  if (d.length < 3) return null;
+  if (d.length < 3) return (matchFound = null);
   /* A fourth test used to sit here: lowerOf(p).startsWith(value.toLowerCase()).
      The keypad can only ever hold digits, "*", "#" and "+" — add(), the
      hardware-keyboard filter, Paste and __phoneNumber all strip everything else
@@ -855,7 +873,7 @@ function findMatch() {
      fold, a WeakMap read and a startsWith for each of them. Measured on a
      3000-contact book, dropping it takes about a sixth off the cost of a
      keystroke's contact match. */
-  return people.find(p => {
+  matchFound = people.find(p => {
     if (!p) return false;
     const tel = telOf(p);
     return tel.startsWith(d) ||
@@ -865,6 +883,7 @@ function findMatch() {
       (d.length >= 7 && tel.endsWith(d)) ||
       t9Of(p).startsWith(d);
   }) || null;
+  return matchFound;
 }
 
 /* the number line is width:100%, so its client width only changes when the
@@ -1158,8 +1177,10 @@ function showView(i) {
   showView.t = setTimeout(() => { app.classList.remove(d); old.classList.remove("leaving"); }, 1200);
   if (NAMES[i] === "recents") syncSeg();
   /* the Contacts list is built the first time the tab is actually shown: see
-     hydrateNative(). contactsHTML is null whenever the rows are stale. */
-  else if (NAMES[i] === "contacts" && contactsHTML === null) renderContacts($("q").value || "");
+     hydrateNative(). renderContacts() knows from the query and the list
+     generation whether anything on screen has to change, so this costs a string
+     comparison rather than a rebuild. */
+  else if (NAMES[i] === "contacts") renderContacts($("q").value || "");
   /* the keypad can be resized while it is off screen — the soft keyboard opening
      over the contacts search, a window resize — and fitNumber() cannot measure a
      hidden line, because clientWidth is 0: it gives up and leaves the cached
@@ -1279,10 +1300,35 @@ function renderFavs() {
 }
 renderFavs();
 
-/* the markup last written into #recents — same rule as contactsHTML below: a
-   re-render that produces the identical string still re-parses and re-lays-out
-   up to eighty rows, and Recents is re-rendered on every hydrate and every dial */
+/* the markup last written into #recents: a re-render that produces the identical
+   string still re-parses and re-lays-out up to eighty rows, and Recents is
+   re-rendered on every hydrate and every dial */
 let recentsHTML = null;
+/* One row's markup depends only on that row, and the rows themselves are kept
+   stable across renders (dialedRow below). It was rebuilt — two escapes, an
+   avatar, a time — for each of up to eighty rows on every dial and every return
+   to the foreground. Built once per row; the WeakMap lets a row that has rolled
+   out of the list be collected with it. */
+const recRowHTML = new WeakMap();
+function recRowMarkup(r) {
+  /* a row that carries its own person is stable, so its markup can be kept; the
+     legacy r.i form resolves against people[] at render time and must not be */
+  const stable = !!r.p;
+  if (stable) {
+    const hit = recRowHTML.get(r);
+    if (hit !== undefined) return hit;
+  }
+  const p = r.p || people[r.i];
+  if (!p) return "";
+  const html = `<button class="row ${r.kind}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
+      ${avHTML(p)}
+      <span class="t"><b>${esc(p.n)}</b><small>${esc(r.label)}</small></span>
+      <time>${esc(r.when)}</time>
+      <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
+    </button>`;
+  if (stable) recRowHTML.set(r, html);
+  return html;
+}
 /* A locally dialled row was wrapped in a fresh person object — and the whole
    list in four throwaway arrays (map, concat, filter, filter) — on every render,
    and Recents is re-rendered on every dial and every hydrate. Keep one wrapper
@@ -1301,23 +1347,16 @@ function dialedRow(d) {
 function renderRecents(filter) {
   const missed = filter === "missed";
   let html = "";
-  const emit = (p, when, kind, label) => {
-    if (!p) return;
-    if (missed && kind !== "missed") return;
-    html += `<button class="row ${kind}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
-      ${avHTML(p)}
-      <span class="t"><b>${esc(p.n)}</b><small>${esc(label)}</small></span>
-      <time>${esc(when)}</time>
-      <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
-    </button>`;
-  };
   for (let i = 0; i < dialed.length; i++) {
     const r = dialedRow(dialed[i]);
-    emit(r.p, r.when, r.kind, r.label);
+    if (missed && r.kind !== "missed") continue;
+    html += recRowMarkup(r);
   }
   for (let i = 0; i < recents.length; i++) {
     const r = recents[i];
-    if (r) emit(r.p || people[r.i], r.when, r.kind, r.label);
+    if (!r) continue;
+    if (missed && r.kind !== "missed") continue;
+    html += recRowMarkup(r);
   }
   html = html || `<div class="empty">${missed ? "No Missed Calls" : "No Calls"}</div>`;
   if (html === recentsHTML) return;   /* nothing to re-parse, nothing to lay out */
@@ -1362,13 +1401,18 @@ let contactIdx = [];
    and sorts the same list about twice as fast. */
 const nameCollator = (typeof Intl !== "undefined" && Intl.Collator) ? new Intl.Collator() : null;
 const cmpName = (a, b) => nameCollator ? nameCollator.compare(a, b) : a.localeCompare(b);
-/* The markup last written into #contacts. Rebuilding a few thousand rows of
-   HTML and handing them to innerHTML re-parses and re-lays-out the whole list
-   even when the result is byte-identical to what is already on screen — which is
-   what happened on every hydrate, and on every keystroke typed and then deleted.
-   Nothing else ever writes to #contacts, so an unchanged string means an
-   unchanged list. */
-let contactsHTML = null;
+/*
+ * What the list shows is a sequence of index entries, and a row's markup cannot
+ * change once it is built — so two renders that pick the same entries in the
+ * same order are drawing the same thing. The guard here used to keep the
+ * finished markup and compare the next one against it: correct, but it meant
+ * holding a second full copy of the list (about 700 kB for 3000 contacts) for
+ * the life of the page just to answer "did anything change", and comparing every
+ * byte of it on each keystroke. A list of references answers the same question in
+ * a pointer compare per row, and no copy of the markup is kept at all.
+ */
+let shownRows = null;
+const pickBuf = [];
 function buildContactIdx() {
   contactIdx = people.filter(p => p).map(p => {
     const tel = String(p.t == null ? "" : p.t);
@@ -1400,12 +1444,39 @@ function buildContactIdx() {
       disp: fmt(tel)
     };
   }).sort((a, b) => cmpName(a.name, b.name));
-  contactsHTML = null;   /* the rows changed: what is on screen is stale */
+  contactGen++;   /* the rows changed: what is on screen is stale */
+}
+/*
+ * The markup of one row depends only on the contact it draws, and a contact
+ * cannot change while the page holds it: a device read replaces the whole list.
+ * It was rebuilt — two escapes, an avatar and a template — for every entry on
+ * every keystroke in the search box: measured at 55–60 ms for a 3000-contact
+ * book, on the main thread, every time the query changed. Built once per contact,
+ * on the first render that actually needs it, so a data load pays nothing for
+ * contacts nobody has looked at yet, and every later render is a concatenation
+ * (0.7–0.9 ms for the same 3000 rows).
+ */
+function rowMarkup(e) {
+  let html = e.html;
+  if (html === undefined) {
+    const p = e.p;
+    html = `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
+      ${avHTML(p)}
+      <span class="t"><b>${esc(p.n)}</b><small>${esc(e.disp)}</small></span>
+    </button>`;
+    e.html = html;
+    /* every other value written into this markup goes through esc(); the section
+       header was the one that did not, so a contact whose name starts with "<"
+       or "&" ("<3 Amma") put a bare markup character into the list */
+    e.secHTML = `<div class="sec">${esc(e.sec)}</div>`;
+  }
+  return html;
 }
 function renderContacts(q) {
+  const raw = q || "";
   /* the query is folded the same way the stored names are, so typing "josé"
      finds "José" instead of nothing at all */
-  const raw = q || "", needle = fold(raw).toLowerCase();
+  const needle = fold(raw).toLowerCase();
   /* a number is stored the way the device saved it, so searching the digits a
      person would dial ("5551234") matched nothing at all */
   /* ...but only when the query is a number. Every query had its digits pulled
@@ -1414,25 +1485,34 @@ function renderContacts(q) {
      returned the whole address book. Digits are a number search only when
      there is nothing else in the box. */
   const needleDig = /^[0-9\s()+\-.,]+$/.test(raw) ? needle.replace(/[^0-9]/g, "") : "";
-  let out = "", last = "";
+  const picked = pickBuf;
+  picked.length = 0;
   for (let i = 0; i < contactIdx.length; i++) {
-    const e = contactIdx[i], p = e.p;
+    const e = contactIdx[i];
     if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0
         && !(needleDig && e.dig.indexOf(needleDig) >= 0)) continue;
-    const L = e.sec;
-    /* every other value written into this markup goes through esc(); the section
-       header was the one that did not, so a contact whose name starts with "<"
-       or "&" ("<3 Amma") put a bare markup character into the list */
-    if (L !== last) { out += `<div class="sec">${esc(L)}</div>`; last = L; }
-    out += `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
-      ${avHTML(p)}
-      <span class="t"><b>${esc(p.n)}</b><small>${esc(e.disp)}</small></span>
-    </button>`;
+    picked.push(e);
   }
-  const html = out || '<div class="empty">No Contacts</div>';
-  if (html === contactsHTML) return;   /* nothing to re-parse, nothing to lay out */
-  contactsHTML = html;
-  $("contacts").innerHTML = html;
+  const prev = shownRows;
+  let same = !!prev && prev.length === picked.length;
+  if (same) {
+    for (let i = 0; i < picked.length; i++) {
+      if (picked[i] !== prev[i]) { same = false; break; }
+    }
+  }
+  /* the same rows, in the same order: the same list is already on screen. A
+     different query that happens to select exactly the same people (typing a
+     digit every number shares) lands here instead of re-parsing 3000 rows. */
+  if (same) return;
+  shownRows = picked.slice();
+  let out = "", last = "";
+  for (let i = 0; i < picked.length; i++) {
+    const e = picked[i];
+    if (e.html === undefined) rowMarkup(e);
+    if (e.sec !== last) { out += e.secHTML; last = e.sec; }
+    out += e.html;
+  }
+  $("contacts").innerHTML = out || '<div class="empty">No Contacts</div>';
 }
 buildContactIdx();
 renderContacts("");
