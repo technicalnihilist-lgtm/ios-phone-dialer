@@ -1177,9 +1177,9 @@ function showView(i) {
   showView.t = setTimeout(() => { app.classList.remove(d); old.classList.remove("leaving"); }, 1200);
   if (NAMES[i] === "recents") syncSeg();
   /* the Contacts list is built the first time the tab is actually shown: see
-     hydrateNative(). renderContacts() knows from the query and the list
-     generation whether anything on screen has to change, so this costs a string
-     comparison rather than a rebuild. */
+     hydrateNative(). renderContacts() compares the rows it would draw against the
+     rows already on screen, so calling it here costs a walk over the index rather
+     than a rebuild of the list. */
   else if (NAMES[i] === "contacts") renderContacts($("q").value || "");
   /* the keypad can be resized while it is off screen — the soft keyboard opening
      over the contacts search, a window resize — and fitNumber() cannot measure a
