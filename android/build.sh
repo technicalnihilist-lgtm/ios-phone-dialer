@@ -20,6 +20,13 @@ J="$JAVA_HOME/bin/java -Xmx192m -XX:MaxMetaspaceSize=64m -XX:CompressedClassSpac
 # anywhere, and a hard-coded path only ever built the one layout
 cd "$(dirname "$0")"
 
+# A signed APK from an earlier run used to survive a build that had no key to
+# sign with: the no-keystore path below exits 0 and leaves Phone-Dialer.apk
+# exactly where it was, so the directory could hold a freshly built tree next to
+# a stale, perfectly publishable APK. Drop it before we start — only the sign
+# step near the end of this script puts it back.
+rm -f Phone-Dialer.apk
+
 # assets/index.html is the page aapt2 puts in the APK, and nothing used to keep
 # it in step with the page in the repository root: a forgotten copy shipped the
 # previous build's UI inside a new APK. Copy it in as the first thing we do.

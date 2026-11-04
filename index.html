@@ -827,17 +827,9 @@ function t9Of(p) {
   return d;
 }
 
-/* the lower-cased name and the number string never change either, and both were
-   rebuilt for every contact on every keystroke; cache them per contact object */
-const lowCache = new WeakMap(), telCache = new WeakMap();
-function lowerOf(p) {
-  let s = lowCache.get(p);
-  if (s === undefined) {
-    s = fold(p.n).toLowerCase();
-    lowCache.set(p, s);
-  }
-  return s;
-}
+/* the number string never changes either, and it was rebuilt for every contact
+   on every keystroke; cache it per contact object */
+const telCache = new WeakMap();
 /* device contacts carry the number exactly as it was saved — "(555) 123-4567",
    "+91 98765 43210" — and comparing that raw string against the digits on the
    keypad meant a typed number almost never matched the contact it belonged to.
@@ -854,7 +846,15 @@ function telOf(p) {
 function findMatch() {
   const d = value.replace(/\D/g, "");
   if (d.length < 3) return null;
-  const lv = value.toLowerCase();
+  /* A fourth test used to sit here: lowerOf(p).startsWith(value.toLowerCase()).
+     The keypad can only ever hold digits, "*", "#" and "+" — add(), the
+     hardware-keyboard filter, Paste and __phoneNumber all strip everything else
+     — so that test compared a contact's *name* against a *digits* string. It
+     could not fire for any real name, yet it ran for every contact that the
+     three tests below did not already match, on every keystroke: a lower-case
+     fold, a WeakMap read and a startsWith for each of them. Measured on a
+     3000-contact book, dropping it takes about a sixth off the cost of a
+     keystroke's contact match. */
   return people.find(p => {
     if (!p) return false;
     const tel = telOf(p);
@@ -863,8 +863,7 @@ function findMatch() {
          person actually dials; once enough has been typed to be unambiguous,
          compare the tail of the number too */
       (d.length >= 7 && tel.endsWith(d)) ||
-      t9Of(p).startsWith(d) ||
-      lowerOf(p).startsWith(lv);
+      t9Of(p).startsWith(d);
   }) || null;
 }
 
@@ -1421,7 +1420,10 @@ function renderContacts(q) {
     if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0
         && !(needleDig && e.dig.indexOf(needleDig) >= 0)) continue;
     const L = e.sec;
-    if (L !== last) { out += `<div class="sec">${L}</div>`; last = L; }
+    /* every other value written into this markup goes through esc(); the section
+       header was the one that did not, so a contact whose name starts with "<"
+       or "&" ("<3 Amma") put a bare markup character into the list */
+    if (L !== last) { out += `<div class="sec">${esc(L)}</div>`; last = L; }
     out += `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
       <span class="t"><b>${esc(p.n)}</b><small>${esc(e.disp)}</small></span>
@@ -1827,7 +1829,12 @@ function hydrateNative(logOnly) {
   if (!freshPeople && !freshLog) return;
   if (freshPeople) {
     people.length = 0;
-    list.forEach(p => { if (p) people.push(p); });
+    /* Every cache on the contact path is a WeakMap keyed by the contact object,
+       and a primitive is not a legal key: initialsOf() already refuses one, but
+       t9Of()/telOf() would throw on it — and that throw came out of render(),
+       so one malformed row stopped the number line updating for the rest of the
+       session. Only objects can be contacts. */
+    list.forEach(p => { if (p && typeof p === "object") people.push(p); });
   }
   if (freshLog) {
     recents.length = 0;
@@ -1871,7 +1878,13 @@ function hydrateNative(logOnly) {
      was rebuilt even while the Contacts tab was off screen, and buildContactIdx()
      has already marked it stale, so it is now built when the tab is opened —
      or straight away if that tab is the one on screen. */
-  if (app.dataset.view === "contacts") renderContacts($("q").value || "");
+  /* ...but only when the contacts themselves changed. A log-only refresh leaves
+     the index, and therefore the markup, exactly as it was (buildContactIdx()
+     is the only thing that marks it stale), and this ran on every return to the
+     foreground: with the Contacts tab open, each resume rebuilt all three
+     thousand rows into a string and then threw it away because it matched the
+     cached one — about 33 ms of main-thread work per resume, measured. */
+  if (freshPeople && app.dataset.view === "contacts") renderContacts($("q").value || "");
   /* the keypad was never repainted after a data load. A number typed while the
      contacts were still being read — or before the permission result arrived —
      therefore showed no contact match under it, and kept the font size it had

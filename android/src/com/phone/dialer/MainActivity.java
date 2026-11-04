@@ -99,6 +99,19 @@ public class MainActivity extends Activity {
     private boolean pageReady;
 
     /**
+     * A full re-read of contacts and the call log that is owed to the page but
+     * that the page cannot run yet. evaluateJavascript() against a page that has
+     * not finished loading is evaluated in the empty document and thrown away,
+     * and two paths made that call without checking pageReady: the permission
+     * result (which can arrive before a slow first load finishes — the read was
+     * then lost and the app kept its empty lists until it was backgrounded and
+     * resumed) and the renderer-restart path below (where the new page comes up
+     * with nothing at all). Queued here and delivered by onPageFinished(), the
+     * same rule deliverPendingDial() already follows for a number from a link.
+     */
+    private boolean pendingHydrate;
+
+    /**
      * Whether contacts and the call log were readable the last time we looked,
      * tracked separately: access can be lost for one of them while the other is
      * still granted, and a single combined flag never noticed that.
@@ -188,12 +201,20 @@ public class MainActivity extends Activity {
                 if (view != web) return;
                 pageReady = true;
                 deliverPendingDial();
+                deliverPendingHydrate();
             }
 
             @Override
             public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 destroyWebView(view);
                 if (web == view) web = null;
+                /* The page that comes back is a brand-new document: the contact
+                   list, the call log and the cached index all went with the dead
+                   renderer, and nothing re-read them for the new one. The app
+                   then showed "No Contacts" and "No Calls" until the process
+                   was killed and started again. Ask for a full read once the
+                   fresh page reports that it has loaded. */
+                pendingHydrate = true;
                 if (!isFinishing() && !isDestroyed()) {
                     setContentView(createWebView());
                 }
@@ -204,6 +225,29 @@ public class MainActivity extends Activity {
         w.loadUrl("file:///android_asset/index.html");
         web = w;
         return w;
+    }
+
+    /**
+     * Asks the page to re-read contacts and the call log, now if it can and
+     * otherwise as soon as it has finished loading.
+     */
+    private void requestHydrate() {
+        if (web != null && pageReady) {
+            try {
+                web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+            } catch (Exception ignored) { }
+            return;
+        }
+        pendingHydrate = true;
+    }
+
+    /** Runs a read that was requested before the page could take it. */
+    private void deliverPendingHydrate() {
+        if (!pendingHydrate || !pageReady || web == null) return;
+        pendingHydrate = false;
+        try {
+            web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+        } catch (Exception ignored) { }
     }
 
     /**
@@ -287,7 +331,7 @@ public class MainActivity extends Activity {
            been typed — which is exactly what happened on the first launch,
            because the dialog result arrives after the page has loaded. */
         if (accessChanged()) {
-            web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+            requestHydrate();
         }
         /* onResume() runs again right after this result arrives; without this the
            very first grant re-read the whole contact list twice */
@@ -343,7 +387,7 @@ public class MainActivity extends Activity {
            change, in either direction. */
         if (web != null) {
             if (accessChanged()) {
-                web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
+                requestHydrate();
             } else if (pageReady) {
                 /* The call log was read at boot and when the permission state
                    changed, and never again. A call that arrived while the app
