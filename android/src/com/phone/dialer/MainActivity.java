@@ -477,14 +477,9 @@ public class MainActivity extends Activity {
             }
         }
 
-        @JavascriptInterface
-        public String version() {
-            try {
-                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-            } catch (Exception e) {
-                return "";
-            }
-        }
+        /* A version() bridge method used to sit here. Nothing in index.html ever
+           asked PhoneNative for a version, so it was an unused entry point on the
+           interface the page can reach; removed rather than left to rot. */
     }
 
     private void toast(String msg) {

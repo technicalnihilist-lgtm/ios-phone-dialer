@@ -1001,8 +1001,14 @@ function closeMenu() { $("menu").classList.remove("show"); }
 document.addEventListener("pointerdown", e => {
   if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
 }, true);
-$("pasteBtn").addEventListener("click", async () => {
+$("pasteBtn").addEventListener("click", () => {
   closeMenu();
+  /* the clipboard text arrives either from the bridge or from a promise, so the
+     part that uses it is written once and handed to both */
+  const use = txt => {
+    const clean = (txt || "").replace(/[^\d+*#]/g, "");
+    if (clean) { value = clean.slice(0, 20); render(); }
+  };
   let txt = "";
   /* navigator.clipboard is not implemented by the Android WebView, so inside the
      app the Paste item in this menu did nothing at all — it asked for the clip,
@@ -1011,11 +1017,13 @@ $("pasteBtn").addEventListener("click", async () => {
   if (window.PhoneNative && PhoneNative.clipboard) {
     try { txt = String(PhoneNative.clipboard() || ""); } catch (err) { txt = ""; }
   }
-  if (!txt) {
-    try { txt = await navigator.clipboard.readText(); } catch (err) { txt = ""; }
-  }
-  const clean = (txt || "").replace(/[^\d+*#]/g, "");
-  if (clean) { value = clean.slice(0, 20); render(); }
+  if (txt) { use(txt); return; }
+  /* an async function needs Chrome 55, and this page has to parse on the WebView
+     an Android 7 phone shipped with (Chrome 51) — a syntax error there leaves the
+     keypad unbuilt. A promise does the same job and parses everywhere. */
+  try {
+    navigator.clipboard.readText().then(use, () => {});
+  } catch (err) { /* no clipboard API at all: nothing to paste */ }
 });
 
 /* ---------------- views / tab bar ---------------- */
@@ -1308,7 +1316,11 @@ function buildContactIdx() {
       /* the section header this row falls under: the name cannot change, so it
          was pointless rebuilding and upper-casing it for every contact on every
          keystroke */
-      sec: (name || "#").charAt(0).toUpperCase(),
+      /* charAt(0) is a UTF-16 code unit, so a name starting with a glyph outside
+         the basic plane — an emoji, a rare script — was cut in half and the
+         section header drew a replacement box, the same defect initials() was
+         fixed for. Take the whole first code point. */
+      sec: (name ? Array.from(name)[0] : "#").toUpperCase(),
       /* the subtitle is the number run through fmt(), which is a regex pass and
          two slices; it cannot change, and it was rebuilt for every visible row
          on every keystroke */
@@ -1323,7 +1335,12 @@ function renderContacts(q) {
   const raw = q || "", needle = fold(raw).toLowerCase();
   /* a number is stored the way the device saved it, so searching the digits a
      person would dial ("5551234") matched nothing at all */
-  const needleDig = needle.replace(/[^0-9]/g, "");
+  /* ...but only when the query is a number. Every query had its digits pulled
+     out and matched against the numbers, so "office 2" and "rao 6" listed every
+     contact whose number happened to contain that digit — a name search that
+     returned the whole address book. Digits are a number search only when
+     there is nothing else in the box. */
+  const needleDig = /^[0-9\s()+\-.,]+$/.test(raw) ? needle.replace(/[^0-9]/g, "") : "";
   let out = "", last = "";
   for (let i = 0; i < contactIdx.length; i++) {
     const e = contactIdx[i], p = e.p;
@@ -1378,9 +1395,17 @@ matchEl.addEventListener("click", () => {
 /* ---------------- placing a real call ---------------- */
 const MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
 
+/* Two digits, without String.prototype.padStart. padStart only exists from
+   Chrome 57, and this app runs on a WebView the device provides: the one an
+   Android 7 phone shipped with is Chrome 51, where padStart is missing and every
+   caller threw — stamp() on the first dial, and tick() while the page was still
+   starting up, which took the rest of that start-up with it (no contact read, no
+   tab capsule, no number fitting). */
+const pad2 = n => (n < 10 ? "0" : "") + n;
+
 function stamp() {
   const d = new Date();
-  return (d.getHours() % 12 || 12) + ":" + String(d.getMinutes()).padStart(2, "0");
+  return (d.getHours() % 12 || 12) + ":" + pad2(d.getMinutes());
 }
 
 /* The number and time of the last dial. A double tap on the green button — or on
@@ -1431,8 +1456,7 @@ let callTimer = null, callStartedAt = 0;
 /* elapsed time comes from the clock, so it is still right after the timer was paused */
 function paintCallTime() {
   const secs = Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000));
-  csStatus.textContent = String(Math.floor(secs / 60)).padStart(2, "0") + ":" +
-                         String(secs % 60).padStart(2, "0");
+  csStatus.textContent = pad2(Math.floor(secs / 60)) + ":" + pad2(secs % 60);
 }
 function startCallTimer() {
   clearInterval(callTimer);
@@ -1463,14 +1487,25 @@ function startCall(number, person) {
 }
 function endCall() {
   clearInterval(callTimer); clearTimeout(startCall.t);
-  document.querySelectorAll(".cs-btn.on").forEach(b => b.classList.remove("on"));
+  document.querySelectorAll(".cs-btn.on").forEach(b => {
+    b.classList.remove("on");
+    b.setAttribute("aria-pressed", "false");   /* the state above was cleared */
+  });
   cs.classList.remove("show");
   device.classList.remove("calling");
   cs.setAttribute("aria-hidden","true");
 }
 $("csEnd").addEventListener("click", endCall);
-document.querySelectorAll(".cs-btn").forEach(b =>
-  b.addEventListener("click", () => b.classList.toggle("on")));
+document.querySelectorAll(".cs-btn").forEach(b => {
+  /* these six controls change state on screen (mute on, keypad open) and told a
+     screen reader nothing at all; the All/Missed control already exposes its
+     state this way, so the call sheet's controls now do too */
+  b.setAttribute("aria-pressed", "false");
+  b.addEventListener("click", () => {
+    b.classList.toggle("on");
+    b.setAttribute("aria-pressed", b.classList.contains("on") ? "true" : "false");
+  });
+});
 $("call").addEventListener("click", () => {
   if (!value) return;
   const m = findMatch();
@@ -1481,7 +1516,7 @@ $("call").addEventListener("click", () => {
 const clockEl = $("clock");
 function tick() {
   const d = new Date();
-  let h = d.getHours(), m = String(d.getMinutes()).padStart(2, "0");
+  let h = d.getHours(), m = pad2(d.getMinutes());
   h = h % 12 || 12;
   clockEl.textContent = h + ":" + m;
 }
@@ -1560,11 +1595,13 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     $("installText").innerHTML = "Tap <b>Share</b> then <b>Add to Home Screen</b> to keep Phone on your home screen.";
   }
   card.classList.add("show");
-  btn.addEventListener("click", async () => {
+  /* same reason as the Paste handler: no async function in this page */
+  btn.addEventListener("click", () => {
     if (!prompt) return;
-    prompt.prompt();
-    await prompt.userChoice;
-    card.classList.remove("show");
+    const p = prompt;
+    p.prompt();
+    const done = () => card.classList.remove("show");
+    try { p.userChoice.then(done, done); } catch (err) { done(); }
   });
 })();
 

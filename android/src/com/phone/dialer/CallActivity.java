@@ -264,6 +264,20 @@ public class CallActivity extends Activity {
         super.onStop();
     }
 
+    /**
+     * Back used to finish this screen while the call stayed up. The activity is
+     * excludeFromRecents and nothing in the app posts an ongoing-call
+     * notification, so once it was gone there was no way back to the controls
+     * and no way to hang up from the app at all — the call could only be ended
+     * from the system's own UI or by the other side hanging up. While a call is
+     * live the screen stays put; with no call left it closes as any screen does.
+     */
+    @Override
+    public void onBackPressed() {
+        if (DialerInCallService.current != null) return;
+        super.onBackPressed();
+    }
+
     /** Paints the caller for a number; the lookup runs only when the number actually changed. */
     private void showCaller(String number) {
         final String n = number == null ? "" : number;
