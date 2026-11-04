@@ -63,6 +63,27 @@ public class MainActivity extends Activity {
             "#9be15d", "#00a86b", "#ffd166", "#ef8a17", "#8f9bff", "#4b5bd6"
     };
 
+    /**
+     * The avatar pairs, built once. There are only nine of them, but colorsFor()
+     * ran for every contact on every read and for every call-log row, and handed
+     * back a freshly allocated JSONArray (plus its two Strings) each time: a
+     * thousand-contact address book meant a thousand throwaway arrays per
+     * hydrate. The array is never mutated — it is put into a JSONObject and
+     * serialised — so the same instance can be shared.
+     */
+    private static final JSONArray[] AVATAR_PAIRS = buildAvatarPairs();
+
+    private static JSONArray[] buildAvatarPairs() {
+        JSONArray[] pairs = new JSONArray[PALETTES.length / 2];
+        for (int i = 0; i < pairs.length; i++) {
+            JSONArray pair = new JSONArray();
+            pair.put(PALETTES[i * 2]);
+            pair.put(PALETTES[i * 2 + 1]);
+            pairs[i] = pair;
+        }
+        return pairs;
+    }
+
     /** Digits kept from a stored number when building the de-duplication key. */
     private static final Pattern NON_DIAL = Pattern.compile("[^0-9+]");
 
@@ -88,7 +109,22 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
 
-        setContentView(createWebView());
+        WebView view = null;
+        try {
+            view = createWebView();
+        } catch (Throwable t) {
+            /* Constructing a WebView throws when the system WebView is missing,
+               disabled, or half-way through an update (WebViewFactory's
+               missing-package and resource errors). That exception used to
+               escape onCreate() and take the whole app down before anything
+               was drawn. There is no page to show without a WebView, so say
+               so instead of crashing. */
+        }
+        if (view == null) {
+            toast("Phone needs the Android System WebView — enable or reinstall it in Settings");
+            return;
+        }
+        setContentView(view);
         /* a number carried in by a tel: link is shown once the page is up */
         takeDialExtra(getIntent());
 
@@ -586,6 +622,12 @@ public class MainActivity extends Activity {
                     return new SimpleDateFormat("MMM d, yyyy", Locale.US);
                 }
             };
+    /** One Date per thread, reused: shortTime() ran for every call-log row and
+     *  allocated a fresh Date for each of them — forty per refresh. */
+    private static final ThreadLocal<Date> DATE_SCRATCH =
+            new ThreadLocal<Date>() {
+                @Override protected Date initialValue() { return new Date(0); }
+            };
 
     /**
      * Same output as before, without building four formatters for every call-log
@@ -596,19 +638,17 @@ public class MainActivity extends Activity {
     private static String shortTime(long millis, Calendar now, Calendar d) {
         d.setTimeInMillis(millis);
         boolean thisYear = d.get(Calendar.YEAR) == now.get(Calendar.YEAR);
+        Date at = DATE_SCRATCH.get();
+        at.setTime(millis);
         if (thisYear && d.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)) {
-            return FMT_TIME.get().format(new Date(millis));
+            return FMT_TIME.get().format(at);
         }
-        return (thisYear ? FMT_MD.get() : FMT_MDY.get()).format(new Date(millis));
+        return (thisYear ? FMT_MD.get() : FMT_MDY.get()).format(at);
     }
 
     private static JSONArray colorsFor(String name) {
         /* & 0x7fffffff, not Math.abs: abs(Integer.MIN_VALUE) is still negative and threw. */
         int h = (name == null ? 0 : name.hashCode()) & 0x7fffffff;
-        int i = (h % (PALETTES.length / 2)) * 2;
-        JSONArray a = new JSONArray();
-        a.put(PALETTES[i]);
-        a.put(PALETTES[i + 1]);
-        return a;
+        return AVATAR_PAIRS[h % AVATAR_PAIRS.length];
     }
 }

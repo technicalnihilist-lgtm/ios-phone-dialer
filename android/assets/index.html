@@ -663,19 +663,42 @@ const AV_FALLBACK = ["#8e8e93", "#636366"];
 /* w[0] is a UTF-16 code unit, not a character. A name that starts with an emoji
    — or any glyph outside the basic plane — was cut in half and drawn as a
    replacement box in the avatar. Take whole code points, at most two. */
+/* Array.from(s)[0] turned the WHOLE string into a code-point array just to read
+   its first character: a few thousand contacts meant a few thousand throwaway
+   arrays on the load path, and one more per avatar on every list render. Read
+   the first code point in place instead. */
+const firstCodePoint = s => {
+  if (!s) return "";
+  return s.codePointAt(0) > 0xffff ? s.slice(0, 2) : s.charAt(0);
+};
 const initials = n => {
   const words = String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean);
   const out = [];
   for (let i = 0; i < words.length && out.length < 2; i++) {
-    const c = Array.from(words[i])[0];
+    const c = firstCodePoint(words[i]);
     if (c) out.push(c);
   }
   return out.join("") || "#";
 };
+/* the initials of a person never change, and they were rebuilt — a regex split,
+   a filter and a join — for every avatar of every visible row on every render,
+   which is every keystroke in the contacts search. Cache them per person, the
+   same way the T9 digits and the search keys already are. */
+const iniCache = new WeakMap();
+function initialsOf(p) {
+  const n = p && p.n;
+  if (!p || typeof p !== "object") return initials(n);
+  let s = iniCache.get(p);
+  if (s === undefined) {
+    s = initials(n);
+    iniCache.set(p, s);
+  }
+  return s;
+}
 const avColors = c => (Array.isArray(c) && c.length > 1) ? c : AV_FALLBACK;
 const avHTML = p => {
   const c = avColors(p && p.c);
-  return `<span class="av" style="--a:${esc(c[0])};--b:${esc(c[1])}">${esc(initials(p && p.n))}</span>`;
+  return `<span class="av" style="--a:${esc(c[0])};--b:${esc(c[1])}">${esc(initialsOf(p))}</span>`;
 };
 
 /* ---------------- keypad ---------------- */
@@ -749,13 +772,30 @@ function fmt(v) {
   return d;
 }
 
+/* fmt() is two regex passes and three slices. render() runs on every keystroke,
+   but also after every data load, every dial and every delete, where the number
+   has not changed at all and the result was recomputed for nothing. */
+let fmtIn = null, fmtOut = "";
+function fmtCached(v) {
+  if (v === fmtIn) return fmtOut;
+  fmtIn = v; fmtOut = fmt(v);
+  return fmtOut;
+}
+
 /* A name saved with an accent — "Zoë", "José", "Ünal" — could not be found at
    all. Its accented letter matched no key, so the T9 digits came out short and
    never lined up with what was typed, and the lower-cased name still carried the
    accent so it never equalled the plain letters in the search box either. Fold
    the diacritics off once, in the caches, and both lookups work. */
+/* normalize("NFD") plus a regex replace ran on every name, every search key and
+   every T9 key — including the pure-ASCII ones, which is nearly all of them.
+   Only a character outside ASCII can carry a diacritic, so anything else skips
+   both passes and comes back as itself. Same answer, far less work on the load
+   path and on every keystroke in the search box. */
+const NON_ASCII = /[^\x00-\x7f]/;
 const fold = s => {
   const t = String(s == null ? "" : s);
+  if (!NON_ASCII.test(t)) return t;
   try {
     return t.normalize ? t.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : t;
   } catch (e) { return t; }
@@ -763,10 +803,17 @@ const fold = s => {
 
 /* T9 lookup: match a contact by digits or by the letters on the keys */
 const T9 = {2:"abc",3:"def",4:"ghi",5:"jkl",6:"mno",7:"pqrs",8:"tuv",9:"wxyz"};
-const toDigits = s => fold(s).toLowerCase().split("").map(ch => {
-  for (const k in T9) if (T9[k].includes(ch)) return k;
-  return "";
-}).join("");
+/* one reverse table, built once, instead of eight includes() scans — and a
+   throwaway array from split() — for every character of every name. toDigits()
+   runs once per contact for the whole address book. */
+const T9_KEY = Object.create(null);
+for (const k in T9) for (const ch of T9[k]) T9_KEY[ch] = k;
+const toDigits = s => {
+  const t = fold(s).toLowerCase();
+  let out = "";
+  for (let i = 0; i < t.length; i++) out += T9_KEY[t.charAt(i)] || "";
+  return out;
+};
 
 /* the T9 digits of a name never change, but they were rebuilt for every
    contact on every keystroke; cache them per contact object instead */
@@ -876,7 +923,7 @@ function render() {
   /* assigning textContent replaces the text node even when the string is
      identical, and that invalidates layout for nothing. render() runs on every
      keystroke, and again after every data load, every dial and every delete. */
-  const text = fmt(value);
+  const text = fmtCached(value);
   if (num.textContent !== text) num.textContent = text;
   del.classList.toggle("show", !!value);
   hint.classList.toggle("show", !!value);
@@ -888,7 +935,7 @@ function render() {
       const mc = avColors(m.c);
       matchAv.style.setProperty("--a", mc[0]);
       matchAv.style.setProperty("--b", mc[1]);
-      matchAv.textContent = initials(m.n);
+      matchAv.textContent = initialsOf(m);
       matchName.textContent = m.n;
     }
   }
@@ -1237,21 +1284,43 @@ renderFavs();
    re-render that produces the identical string still re-parses and re-lays-out
    up to eighty rows, and Recents is re-rendered on every hydrate and every dial */
 let recentsHTML = null;
+/* A locally dialled row was wrapped in a fresh person object — and the whole
+   list in four throwaway arrays (map, concat, filter, filter) — on every render,
+   and Recents is re-rendered on every dial and every hydrate. Keep one wrapper
+   per dialled row beside the row it belongs to, and build the markup in a single
+   pass: the avatar's initials are cached per person, so a stable wrapper also
+   means the avatar is not recomputed either. */
+const dialedPerson = new WeakMap();
+function dialedRow(d) {
+  let r = dialedPerson.get(d);
+  if (r === undefined) {
+    r = { p: { n: d.name, t: d.number, c: ["#8e8e93", "#636366"] }, when: d.when, kind: "out", label: "mobile" };
+    dialedPerson.set(d, r);
+  }
+  return r;
+}
 function renderRecents(filter) {
-  const all = dialed
-    .map(d => ({ p:{ n:d.name, t:d.number, c:["#8e8e93","#636366"] }, when:d.when, kind:"out", label:"mobile" }))
-    .concat(recents.map(r => ({ p: r.p || people[r.i], when:r.when, kind:r.kind, label:r.label })))
-    .filter(r => r.p);
-  const rows = all.filter(r => filter !== "missed" || r.kind === "missed");
-  const html = rows.map(r => {
-    const p = r.p;
-    return `<button class="row ${r.kind}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
+  const missed = filter === "missed";
+  let html = "";
+  const emit = (p, when, kind, label) => {
+    if (!p) return;
+    if (missed && kind !== "missed") return;
+    html += `<button class="row ${kind}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
-      <span class="t"><b>${esc(p.n)}</b><small>${esc(r.label)}</small></span>
-      <time>${esc(r.when)}</time>
+      <span class="t"><b>${esc(p.n)}</b><small>${esc(label)}</small></span>
+      <time>${esc(when)}</time>
       <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
     </button>`;
-  }).join("") || `<div class="empty">${filter === "missed" ? "No Missed Calls" : "No Calls"}</div>`;
+  };
+  for (let i = 0; i < dialed.length; i++) {
+    const r = dialedRow(dialed[i]);
+    emit(r.p, r.when, r.kind, r.label);
+  }
+  for (let i = 0; i < recents.length; i++) {
+    const r = recents[i];
+    if (r) emit(r.p || people[r.i], r.when, r.kind, r.label);
+  }
+  html = html || `<div class="empty">${missed ? "No Missed Calls" : "No Calls"}</div>`;
   if (html === recentsHTML) return;   /* nothing to re-parse, nothing to lay out */
   recentsHTML = html;
   $("recents").innerHTML = html;
@@ -1325,7 +1394,7 @@ function buildContactIdx() {
          the basic plane — an emoji, a rare script — was cut in half and the
          section header drew a replacement box, the same defect initials() was
          fixed for. Take the whole first code point. */
-      sec: (name ? Array.from(name)[0] : "#").toUpperCase(),
+      sec: (firstCodePoint(name) || "#").toUpperCase(),
       /* the subtitle is the number run through fmt(), which is a regex pass and
          two slices; it cannot change, and it was rebuilt for every visible row
          on every keystroke */

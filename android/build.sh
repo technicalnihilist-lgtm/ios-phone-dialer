@@ -60,7 +60,11 @@ $J -cp "$BT/lib/d8.jar" com.android.tools.r8.D8 \
 
 echo "== package"
 cp build/base.apk build/unsigned.apk
-( cd build && zip -q -j unsigned.apk dex/classes.dex )
+# d8 writes classes.dex and, once the app outgrows one dex, classes2.dex and so
+# on. Only classes.dex was ever packaged, so the day that happened the build
+# would have shipped an APK that was missing every method in the later dex
+# files — a NoClassDefFoundError at runtime with nothing to show it went wrong.
+( cd build && zip -q -j unsigned.apk dex/*.dex )
 
 echo "== zipalign"
 zipalign -f -p 4 build/unsigned.apk build/aligned.apk

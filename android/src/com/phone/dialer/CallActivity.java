@@ -23,7 +23,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
-import java.util.Locale;
 
 public class CallActivity extends Activity {
 
@@ -616,12 +615,15 @@ public class CallActivity extends Activity {
                     answered = true;
                     startedAt = connectTimeOf(call);
                 }
-                long secs = Math.max(0, (System.currentTimeMillis() - startedAt) / 1000);
-                setTextIfChanged(statusView, String.format(Locale.US, "%02d:%02d", secs / 60, secs % 60));
+                /* one clock read for both the counter and the hold check, and a
+                   counter built without String.format() — see clock() below */
+                long now = System.currentTimeMillis();
+                long secs = Math.max(0, (now - startedAt) / 1000);
+                setTextIfChanged(statusView, clock(secs));
                 /* the button said "resume" over a call that is not on hold — when
                    it was resumed from somewhere else, or when hold() never took.
                    A fresh tap gets a moment before it is believed. */
-                if (onHold && System.currentTimeMillis() - holdAskedAt > 1500) setHoldUi(false);
+                if (onHold && now - holdAskedAt > 1500) setHoldUi(false);
                 break;
             case Call.STATE_HOLDING:
                 setTextIfChanged(statusView, "on hold");
@@ -648,6 +650,17 @@ public class CallActivity extends Activity {
             if (speakerBtn.isSelected() != sp) speakerBtn.setSelected(sp);
             setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
         } catch (Exception ignored) { }
+    }
+
+    /**
+     * mm:ss, padded to two digits each. This runs on the one-second tick for the
+     * whole length of every call, and String.format() built a Formatter, parsed
+     * the pattern, and allocated a StringBuilder and a String on every tick for
+     * a string of at most five characters. Same output, no formatter.
+     */
+    private static String clock(long secs) {
+        long m = secs / 60, s = secs % 60;
+        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
     }
 
     /**
