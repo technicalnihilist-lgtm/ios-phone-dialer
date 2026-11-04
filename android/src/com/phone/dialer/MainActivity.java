@@ -69,6 +69,15 @@ public class MainActivity extends Activity {
     private WebView web;
 
     /**
+     * A number a tel: link brought in, waiting for the page to be able to show
+     * it. The bridge call can only be made once the asset page has loaded, and
+     * a second link can arrive while the first one is still queued.
+     */
+    private String pendingDial;
+    /** Whether the asset page has finished loading, so evaluateJavascript lands. */
+    private boolean pageReady;
+
+    /**
      * Whether contacts and the call log were readable the last time we looked,
      * tracked separately: access can be lost for one of them while the other is
      * still granted, and a single combined flag never noticed that.
@@ -80,6 +89,8 @@ public class MainActivity extends Activity {
         super.onCreate(state);
 
         setContentView(createWebView());
+        /* a number carried in by a tel: link is shown once the page is up */
+        takeDialExtra(getIntent());
 
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
@@ -102,6 +113,8 @@ public class MainActivity extends Activity {
         w.setOverScrollMode(View.OVER_SCROLL_NEVER);
         w.setVerticalScrollBarEnabled(false);
         w.setHorizontalScrollBarEnabled(false);
+
+        pageReady = false;
 
         WebSettings s = w.getSettings();
         s.setJavaScriptEnabled(true);
@@ -134,6 +147,14 @@ public class MainActivity extends Activity {
              * half-typed number) is lost.
              */
             @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                if (view != web) return;
+                pageReady = true;
+                deliverPendingDial();
+            }
+
+            @Override
             public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 destroyWebView(view);
                 if (web == view) web = null;
@@ -147,6 +168,47 @@ public class MainActivity extends Activity {
         w.loadUrl("file:///android_asset/index.html");
         web = w;
         return w;
+    }
+
+    /**
+     * Puts a number that arrived by tel: link on the keypad. Called when the page
+     * finishes loading and again if a link arrives later; the field is cleared
+     * before the call so a number is never handed over twice.
+     */
+    private void deliverPendingDial() {
+        final String number = pendingDial;
+        if (number == null || !pageReady || web == null) return;
+        pendingDial = null;
+        String arg;
+        try {
+            arg = JSONObject.quote(number);
+        } catch (Exception e) {
+            return;
+        }
+        try {
+            web.evaluateJavascript("window.__phoneNumber&&window.__phoneNumber(" + arg + ")", null);
+        } catch (Exception ignored) { }
+    }
+
+    /**
+     * A tel: link that arrives while the app is already open comes here — the
+     * activity is singleTop, so the page and any half-typed number survive it.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        takeDialExtra(intent);
+        deliverPendingDial();
+    }
+
+    /** Remembers the number a DIAL intent carried, if any. */
+    private void takeDialExtra(Intent intent) {
+        if (intent == null) return;
+        try {
+            String number = intent.getStringExtra(DialerActivity.EXTRA_DIAL);
+            if (number != null && !number.trim().isEmpty()) pendingDial = number.trim();
+        } catch (Exception ignored) { }
     }
 
     /** Tears a WebView down without leaving its renderer, bridge or parent behind. */
@@ -251,6 +313,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        pageReady = false;
         destroyWebView(web);
         web = null;
         super.onDestroy();

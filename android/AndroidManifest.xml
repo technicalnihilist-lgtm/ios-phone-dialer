@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.phone.dialer"
-    android:versionCode="25"
-    android:versionName="2.5.8">
+    android:versionCode="26"
+    android:versionName="2.5.9">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
@@ -25,6 +25,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density|fontScale|screenLayout"
             android:windowSoftInputMode="adjustResize">

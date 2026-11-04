@@ -825,10 +825,10 @@ function findMatch() {
    device does; reading it back after writing the font size forced a synchronous
    layout on every single keystroke. Measure once, re-measure on resize. */
 let numMaxW = 0;
-/* Length of the longest number line known to fit at the base size. Every glyph
-   has a positive width, so any line with fewer characters is narrower than one
-   that already fit — no measuring needed for those. */
-let fitOkLen = 0;
+/* The text this line was last fitted for, and the width it was fitted into. A
+   repaint that does not change the number (a data load, a tab switch back) has
+   nothing to re-measure, so it is skipped. */
+let fitText = null, fitMax = 0;
 function fitNumber() {
   /* measure first: with the keypad hidden clientWidth is 0, and writing the
      base size before this check left a long number at 40px (clipped) for good
@@ -836,10 +836,16 @@ function fitNumber() {
   const max = numMaxW || (numMaxW = num.clientWidth);
   if (!max) return;
   const text = num.textContent || "";
-  if (text.length <= fitOkLen) {
-    if (num.style.fontSize !== "40px") num.style.fontSize = "40px";
-    return;
-  }
+  /* This used to skip the measurement for any line no longer than the longest
+     one known to fit — on the assumption that fewer characters are always
+     narrower. They are not: a 13-character "(123) 456-789" is 256px wide at
+     40px, while a 12-character "123456789012" is 277px. So a 12-digit number
+     typed after a shorter one kept the 40px size it had been given and the last
+     digit was cut off at the right edge — on a 320px-wide screen, with no
+     ellipsis to show it. Compare text and width instead, and measure. One
+     scrollWidth read on a single line costs well under a millisecond. */
+  if (text === fitText && max === fitMax && num.style.fontSize) return;
+  fitText = text; fitMax = max;
   /* .number animates font-size, so a scrollWidth read straight after writing a
      size measured the *previous* size: the loop below never saw the number
      narrow, and every value long enough to need shrinking collapsed all the way
@@ -849,7 +855,6 @@ function fitNumber() {
   num.style.transition = "none";
   num.style.fontSize = "40px";
   const w = num.scrollWidth;
-  if (w <= max) fitOkLen = text.length;
   if (w > max) {
     /* glyph width scales with font-size, so estimate the fit in one step
        instead of stepping 1px at a time (21 forced reflows per keystroke) */
@@ -1115,7 +1120,7 @@ function showView(i) {
      width at 0. Coming back then kept whatever font size the line had before
      that resize, so a long number returned clipped, with no ellipsis to show it.
      Measure again now that the line has a width. */
-  else if (NAMES[i] === "keypad") { numMaxW = 0; fitOkLen = 0; fitNumber(); }
+  else if (NAMES[i] === "keypad") { numMaxW = 0; fitText = null; fitNumber(); }
 }
 function go(i) { glide(i); showView(i); }
 
@@ -1418,7 +1423,13 @@ const DIAL_REPEAT_MS = 1200;
 
 function placeCall(number, name) {
   const raw = String(number == null ? "" : number);
-  const d = raw.replace(/[^\d+*#]/g, "");
+  const kept = raw.replace(/[^\d+*#]/g, "");
+  /* "+" is only a dialling prefix when it comes first. Holding 0 — or pressing
+     shift and "=" on a keyboard — in the middle of a number put it there too, and
+     the number went to telecom as "tel:555+9": not a dialable number, so the call
+     failed with "Could not start the call" while a row for it still went into
+     Recents. Keep the leading prefix, drop every other one. */
+  const d = (kept.charAt(0) === "+" ? "+" : "") + kept.replace(/\+/g, "");
   /* a value made only of "+", "*" or "#" is not a number: holding 0 until it
      inserted "+" and then tapping Call handed "tel:+" to the system dialer and
      left a "+" row in Recents. startCall() already refused this; the path that
@@ -1801,6 +1812,21 @@ setTimeout(hydrateNative, 0);
 /* the permission dialog result re-runs this instead of reloading the whole page,
    which used to replay the entrance animations and throw away a typed number */
 window.__phoneHydrate = hydrateNative;
+/* A tel: link handed to the app from anywhere else in the system. The manifest
+   has always advertised ACTION_DIAL, but the activity behind it finished without
+   ever reading the intent, so tapping a phone number in a message, a browser or
+   a contact card did nothing at all. The number now lands on the keypad exactly
+   as if it had been typed, ready for the call button. */
+window.__phoneNumber = function (n) {
+  /* "tel:123;ext=6" — the part after the semicolon is not the number, and its
+     digits would otherwise end up on the end of it */
+  const clean = String(n == null ? "" : n).split(";")[0].replace(/[^\d+*#]/g, "").slice(0, 20);
+  if (!clean) return;
+  value = clean;
+  /* the number is only useful on the keypad, so that is the page it opens on */
+  if (app.dataset.view !== "keypad") go(3);
+  render();
+};
 
 /* one re-measure per frame; also keeps the All/Missed capsule on the selected side
    instead of snapping it back to All when the fonts finish loading */
@@ -1810,7 +1836,7 @@ function remeasureLayout() {
   remeasure = true;
   tabMids = null;   /* the tab centres are about to move: drop the cached ones */
   numMaxW = 0;      /* and so is the width the number line fits into */
-  fitOkLen = 0;     /* a narrower line fits fewer characters than the last one */
+  fitText = null;   /* the font may have changed with it: fit the line again */
   requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
 }
 addEventListener("resize", remeasureLayout);
