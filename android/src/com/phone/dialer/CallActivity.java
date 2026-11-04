@@ -394,10 +394,20 @@ public class CallActivity extends Activity {
         boolean next = !speakerOn();
         /* neither route is available: do not claim the speaker was switched */
         if (DialerInCallService.instance == null && audio == null) return;
+        int route = next ? CallAudioState.ROUTE_SPEAKER : CallAudioState.ROUTE_EARPIECE;
         try {
             if (DialerInCallService.instance != null) {
-                DialerInCallService.instance.setAudioRoute(
-                        next ? CallAudioState.ROUTE_SPEAKER : CallAudioState.ROUTE_EARPIECE);
+                DialerInCallService.instance.setAudioRoute(route);
+                /* The route the button was just switched to is the route the
+                   refresh below reads back through speakerOn(). Telecom answers
+                   a route change with onCallAudioStateChanged(), but not before
+                   the next tick — up to a second later, and 500 ms while the
+                   call is still connecting — and that tick repainted the button
+                   from the *old* route: the speaker button un-highlighted itself
+                   after every tap and lit up again when the callback landed.
+                   Record the route we asked for; the callback still overwrites
+                   it if telecom disagrees. */
+                DialerInCallService.audioRoute = route;
             } else {
                 audio.setSpeakerphoneOn(next);
             }
@@ -468,9 +478,21 @@ public class CallActivity extends Activity {
 
     private void endCall() {
         Call call = DialerInCallService.current;
+        /* The screen was closed whether or not the disconnect was accepted. A
+           request that throws — a binder that has gone away, a call telecom no
+           longer knows about — left the line up and the screen gone, and this
+           activity is excludeFromRecents with no ongoing-call notification, so
+           there was no way back to it and no way to hang up from the app at all.
+           Same rule as the mute, speaker and hold buttons: do not act on a
+           request the platform refused. The 1 Hz refresh closes the screen on
+           STATE_DISCONNECTED anyway, so a successful hang-up loses nothing. */
+        boolean hungUp = true;
         try {
             if (call != null) call.disconnect();
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            hungUp = false;
+        }
+        if (!hungUp) return;
         releaseRecorderOffThread();
         finish();
     }

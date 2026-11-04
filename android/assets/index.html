@@ -965,11 +965,21 @@ let springEase = null, numAnim = null;
    and transition, but a Web Animation is not a CSS animation: the keypress scale
    below still ran its full 650 ms for anyone who had asked the system for less
    motion. Asked once, and cached, so no keystroke pays for the query. */
+/* matchMedia() is asked for a media query from three places — the reduced-motion
+   check below, the install banner and the glass defaults — and two of those run
+   at the top level *before* the boot block at the end of this script. A WebView
+   that answers the call with an exception therefore took the rest of the script
+   with it: the keypad drew (it is built earlier) but snap(), render(), the
+   contact hydration and the settings rows never ran, so the number line stayed
+   blank and the lists stayed empty for the life of the page. Every other
+   optional API on this page is asked through a guard; ask this one the same way,
+   from one place. */
+function mq(query) {
+  try { return matchMedia(query); } catch (e) { return null; }
+}
 let reduceMQL;
 function reduceMotion() {
-  if (reduceMQL === undefined) {
-    try { reduceMQL = matchMedia("(prefers-reduced-motion: reduce)"); } catch (e) { reduceMQL = null; }
-  }
+  if (reduceMQL === undefined) reduceMQL = mq("(prefers-reduced-motion: reduce)");
   return !!(reduceMQL && reduceMQL.matches);
 }
 function bump() {
@@ -1589,7 +1599,13 @@ function placeCall(number, name) {
   const now = Date.now();
   if (d === lastDial && now - lastDialAt < DIAL_REPEAT_MS) return;
   lastDial = d; lastDialAt = now;
-  dialed.unshift({ number: d, name: name || fmt(raw), when: stamp() });
+  /* The name on the row has to describe the number that was dialled. It used to
+     be built from the raw value, which still carries every "+" that was dropped
+     above: typing "555", holding 0 and dialling left a Recents row that read
+     "555+" over a number that dials 555, and a second "+" read "555+8+8" over
+     55588. Build it from the cleaned number instead — for every number that
+     needed no cleaning this is the identical string. */
+  dialed.unshift({ number: d, name: name || fmt(d), when: stamp() });
   dialed = dialed.slice(0, 40);
   try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
   renderRecents(recentsFilter());
@@ -1607,7 +1623,7 @@ function placeCall(number, name) {
        dialer cut off at the "#" — the same bug the native bridge already fixed */
     window.location.href = "tel:" + d.replace(/#/g, "%23");   // browser: hand off to the system dialer
   } else {
-    startCall(d, { n: name || fmt(raw) });      // desktop: show the in-app call screen
+    startCall(d, { n: name || fmt(d) });        // desktop: show the in-app call screen
   }
 }
 
@@ -1671,7 +1687,9 @@ document.querySelectorAll(".cs-btn").forEach(b => {
 $("call").addEventListener("click", () => {
   if (!value) return;
   const m = findMatch();
-  placeCall(value, m ? m.n : fmt(value));
+  /* no match: let placeCall name the row from the number it actually dials,
+     rather than handing it the on-screen text — see the note in placeCall() */
+  placeCall(value, m ? m.n : null);
 });
 
 /* ---------------- clock ---------------- */
@@ -1748,7 +1766,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     card.classList.add("show");
     return;
   }
-  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  /* a missing or throwing matchMedia must not stop the page booting: no answer
+     means "not standalone", which is what the banner already assumed */
+  const displayMode = mq("(display-mode: standalone)");
+  const standalone = (displayMode ? displayMode.matches : false) || navigator.standalone === true;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
   if (standalone || off || location.protocol === "file:") return;
   let prompt = null;
@@ -1769,7 +1790,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 
 /* ---------------- liquid glass settings ---------------- */
 (function glassSettings() {
-  const dark = !matchMedia("(prefers-color-scheme: light)").matches;
+  /* same rule: with no answer, fall back to the dark defaults the stylesheet
+     itself falls back to, instead of throwing out of this block */
+  const lightMQ = mq("(prefers-color-scheme: light)");
+  const dark = !(lightMQ && lightMQ.matches);
   const DEF = { v: dark ? 58 : 45, blur: 22, sat: 200, edge: 100, glow: 100 };
   const PRE = {
     def: DEF,

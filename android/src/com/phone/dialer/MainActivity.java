@@ -216,7 +216,28 @@ public class MainActivity extends Activity {
                    fresh page reports that it has loaded. */
                 pendingHydrate = true;
                 if (!isFinishing() && !isDestroyed()) {
-                    setContentView(createWebView());
+                    /* Constructing a WebView throws when the system WebView is
+                       missing, disabled or half-way through an update — the
+                       exact case onCreate() already guards. Here it was called
+                       bare, so a renderer that died *because* the WebView
+                       package was broken came straight back through this
+                       callback and took the process down from an exception
+                       thrown inside a framework callback, which is the one
+                       thing returning true here is meant to prevent. Build it
+                       the way onCreate() does: with no page to be had, say so
+                       and close. */
+                    WebView fresh = null;
+                    try {
+                        fresh = createWebView();
+                    } catch (Throwable t) {
+                        web = null;
+                    }
+                    if (fresh != null) {
+                        setContentView(fresh);
+                    } else {
+                        toast("Phone needs the Android System WebView — enable or reinstall it in Settings");
+                        finish();
+                    }
                 }
                 return true;   /* handled: do not let the system kill the app */
             }
