@@ -511,7 +511,13 @@ public class MainActivity extends Activity {
                     while (c.moveToNext()) {
                         String name = c.getString(0);
                         String number = c.getString(1);
-                        if (number == null) continue;
+                        /* a Phone row can exist with no number at all — some
+                           sync adapters write one — and it was kept: the page
+                           drew a contact with a blank subtitle that dialled
+                           nothing when it was tapped, because placeCall() has
+                           no digits to hand to telecom. There is no such thing
+                           as a dialable contact without a number. */
+                        if (number == null || number.trim().isEmpty()) continue;
                         /* A Phone row whose DISPLAY_NAME comes back null or blank
                            — some providers answer that for a number saved without
                            a name — was dropped from the list altogether: the
@@ -571,12 +577,17 @@ public class MainActivity extends Activity {
                         null, null, CallLog.Calls.DATE + " DESC");
                 int n = 0;
                 if (c != null) {
-                    while (c.moveToNext() && n < 40) {
+                    /* the bound was tested after the cursor had already moved,
+                       so every refresh read one row past the forty it keeps.
+                       Test it first. */
+                    while (n < 40 && c.moveToNext()) {
                         String number = c.getString(0);
                         String name = c.getString(1);
                         int type = c.getInt(2);
                         long when = c.getLong(3);
-                        if (number == null) continue;
+                        /* same as contacts(): a row with no number drew an
+                           empty Recents entry that dialled nothing */
+                        if (number == null || number.trim().isEmpty()) continue;
                         if (name == null || name.trim().isEmpty()) name = number;
 
                         String kind = type == CallLog.Calls.MISSED_TYPE ? "missed"

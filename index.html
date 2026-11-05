@@ -20,8 +20,14 @@
   --card:#1c1c1e;--glassbg:rgba(44,44,48,.62);--glassline:rgba(255,255,255,.12);
   --tabsel:rgba(255,255,255,.16);
   --safe-b:env(safe-area-inset-bottom,0px);
-  --k:clamp(62px,19.1vw,75px);
-  --gap:clamp(16px,6.6vw,26px);
+  /* clamp() is Chrome 79. On anything older the whole declaration is dropped,
+     --k and --gap stay unset, and every rule built on them — the three-column
+     grid, the key diameter, the row gaps — becomes invalid and falls back to
+     auto: the keypad draws as a single column of unstyled buttons. A plain px
+     value first, the clamp after it, so an engine that knows clamp() is
+     untouched and one that does not still gets a keypad. */
+  --k:64px;--k:clamp(62px,19.1vw,75px);
+  --gap:22px;--gap:clamp(16px,6.6vw,26px);
   --vgap:12px;
   color-scheme:dark;
 }
@@ -48,7 +54,13 @@ button{font-family:inherit;color:inherit}
 
 /* ---------- device ---------- */
 .device{
-  position:relative;width:100vw;height:100dvh;background:var(--bg);
+  /* 100dvh is Chrome 108. Where it is not understood the declaration is
+     dropped, .device has no height at all, and the shell collapses to the
+     status bar: the keypad, the tab bar and every list are laid out below the
+     visible area. The vh fallback comes first and the dvh line after it, so a
+     browser that knows dvh keeps it and one that does not still fills the
+     screen. */
+  position:relative;width:100vw;height:100vh;height:100dvh;background:var(--bg);
   display:flex;flex-direction:column;overflow:hidden;
   padding-top:env(safe-area-inset-top,0px);
 }
@@ -82,7 +94,9 @@ button{font-family:inherit;color:inherit}
 /* ---------- app ---------- */
 .app{flex:1;position:relative;min-height:0;z-index:10}
 .view{
-  position:absolute;inset:0;display:none;overflow-y:auto;overflow-x:hidden;
+  /* inset is Chrome 87. Without it an absolutely positioned view has no box:
+     no top, no height, nothing to scroll. Longhands first, shorthand last. */
+  position:absolute;top:0;right:0;bottom:0;left:0;inset:0;display:none;overflow-y:auto;overflow-x:hidden;
   -webkit-overflow-scrolling:touch;scrollbar-width:none;
 }
 .view::-webkit-scrollbar{display:none}
@@ -292,7 +306,7 @@ button{font-family:inherit;color:inherit}
 
 /* ---------- call screen ---------- */
 .callscreen{
-  position:absolute;inset:0;z-index:35;display:flex;flex-direction:column;
+  position:absolute;top:0;right:0;bottom:0;left:0;inset:0;z-index:35;display:flex;flex-direction:column;
   padding:70px 26px calc(34px + var(--safe-b));
   transform:translateY(100%);transition:transform .42s cubic-bezier(.32,.9,.24,1);
   background:
@@ -460,7 +474,7 @@ button{font-family:inherit;color:inherit}
 
 /* call screen: spring sheet (extended below the edge so overshoot never shows a gap) */
 .callscreen{
-  inset:0 0 -90px 0;padding-bottom:calc(124px + var(--safe-b));
+  top:0;right:0;bottom:-90px;left:0;inset:0 0 -90px 0;padding-bottom:calc(124px + var(--safe-b));
   transform:translateY(105%) scale(.96);visibility:hidden;
   transition:transform .8s var(--spring-sheet),visibility 0s .8s;
 }
@@ -733,6 +747,14 @@ try {
       /* the write path keeps 40 rows but the read path took whatever it found,
          so one oversized or hand-edited value rebuilt thousands of rows */
       .slice(0, 40);
+    /* ...and it was only trimmed in memory. A value longer than the cap — one
+       an older build wrote, or one edited by hand — stayed in storage for good,
+       so every launch parsed, filtered and mapped the whole thing again to
+       throw all but forty rows away. Write the trimmed list back the once it
+       differs from what was read. */
+    if (stored.length > dialed.length) {
+      try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
+    }
   }
 } catch (e) { dialed = []; }
 
@@ -1976,13 +1998,35 @@ function hydrateNative(logOnly) {
        the local copy goes. */
     if (recents.length) {
       const logged = new Set();
+      /* the log keeps a number the way the contact saved it, so the exact string
+         alone is not enough to decide "the log already has this call" — see
+         sameAsLogged() below */
+      const loggedDig = [];
       recents.forEach(r => {
         const t = r && r.p ? String(r.p.t == null ? "" : r.p.t).replace(/\D/g, "") : "";
-        if (t) logged.add(t);
+        if (t) { logged.add(t); loggedDig.push(t); }
       });
       if (logged.size) {
         const before = dialed.length;
-        dialed = dialed.filter(d => !logged.has(String(d.number).replace(/\D/g, "")));
+        /* The device log stores "+91 98765 43210" for a number this page writes
+           down as the digits that were actually typed, "9876543210". An exact
+           string compare said those were two different calls, so the row for the
+           call that had just been placed was never dropped: it sat in Recents
+           next to the log's own row for the same call, and stayed there across
+           launches. Compare the tail, exactly as the keypad's contact match
+           already does — the shorter number is the same call when it is a suffix
+           of the longer one, and long enough that the match means something. */
+        const sameAsLogged = n => {
+          if (!n) return false;
+          if (logged.has(n)) return true;
+          if (n.length < 7) return false;
+          for (let i = 0; i < loggedDig.length; i++) {
+            const t = loggedDig[i];
+            if (t.length >= 7 && (t.endsWith(n) || n.endsWith(t))) return true;
+          }
+          return false;
+        };
+        dialed = dialed.filter(d => !sameAsLogged(String(d.number).replace(/\D/g, "")));
         /* only the in-memory list was trimmed, so storage kept every row the log
            already knew about. They came back — with their old times, at the top —
            as soon as the log rolled past them. Write the trimmed list back. */

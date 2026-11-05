@@ -88,9 +88,15 @@ if [ ! -f "$KS" ]; then
   exit 0
 fi
 
+# The alias was never named here, so apksigner signed with whichever key it
+# found first in the store. With a one-key keystore that is the same key and
+# nothing shows; the moment the store holds a second entry the build signs with
+# a different key, and an APK whose signature changed will not install over the
+# build already on the device. The release key's alias is fixed: name it.
 echo "== sign"
 $J -jar "$BT/lib/apksigner.jar" sign \
-  --ks "$KS" --ks-pass "pass:${KS_PASS:-phonedialer}" --key-pass "pass:${KEY_PASS:-phonedialer}" \
+  --ks "$KS" --ks-key-alias "${KS_ALIAS:-phone}" \
+  --ks-pass "pass:${KS_PASS:-phonedialer}" --key-pass "pass:${KEY_PASS:-phonedialer}" \
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out Phone-Dialer.apk build/aligned.apk
 
