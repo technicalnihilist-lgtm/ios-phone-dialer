@@ -54,6 +54,22 @@ public class DialerActivity extends Activity {
             return null;
         }
         if (number == null) return null;
+        /* A tel: URI built by another app is almost always percent-encoded —
+           Uri.encode() writes "*" as %2A and "#" as %23 — and the
+           scheme-specific part is handed over still encoded. The keypad keeps
+           only digits, "+", "*" and "#", so "tel:%2A123%23" reached it as
+           "212323": the "%" was dropped as junk, "2A" lost its letter and the
+           "23" of "%23" was kept as digits. A USSD code therefore arrived on
+           the keypad as a completely different, ordinary number, and tapping
+           Call dialled that number instead of running the code. Decode the
+           escapes before anything reads the digits. Uri.decode() is on every
+           API level this app supports. */
+        try {
+            String decoded = Uri.decode(number);
+            if (decoded != null) number = decoded;
+        } catch (Exception ignored) {
+            /* malformed escape: keep the part exactly as it arrived */
+        }
         /* "tel:12345;ext=6" and "tel:12345#;postd=1" style suffixes are not part
            of the number as far as the keypad is concerned */
         int semi = number.indexOf(';');

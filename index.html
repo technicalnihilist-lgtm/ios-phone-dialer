@@ -1342,19 +1342,30 @@ tabbar.addEventListener("pointercancel", () => dropDrag(true));
 tabbar.addEventListener("lostpointercapture", () => dropDrag(true));
 
 /* ---------------- list rendering ---------------- */
+/* the markup last written into #favs. A full hydrate re-runs this even when the
+   contacts came back identical — the renderer restart, a permission result —
+   and writing the same four tiles back means four buttons destroyed and parsed
+   again, a repaint of the grid and, if Favorites is the tab on screen, a visible
+   blink. Recents and Contacts have both been guarded this way for the same
+   reason; the tiles are the same markup for the same four people. */
+let favsHTML = null;
 function renderFavs() {
   const idx = [0,1,2,3].filter(i => people[i]);
+  let html;
   if (!idx.length) {
-    $("favs").innerHTML = '<div class="empty" style="grid-column:1/-1">No Favorites</div>';
-    return;
+    html = '<div class="empty" style="grid-column:1/-1">No Favorites</div>';
+  } else {
+    html = idx.map(i => {
+      const p = people[i];
+      /* a name the device saved with a leading space ("  Ravi Kumar") split into
+         an empty first chunk, so the tile was drawn with no name at all */
+      const first = String(p.n == null ? "" : p.n).trim().split(/\s+/)[0] || "";
+      return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(first)}</b><small>mobile</small></button>`;
+    }).join("");
   }
-  $("favs").innerHTML = idx.map(i => {
-    const p = people[i];
-    /* a name the device saved with a leading space ("  Ravi Kumar") split into
-       an empty first chunk, so the tile was drawn with no name at all */
-    const first = String(p.n == null ? "" : p.n).trim().split(/\s+/)[0] || "";
-    return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(first)}</b><small>mobile</small></button>`;
-  }).join("");
+  if (html === favsHTML) return;
+  favsHTML = html;
+  $("favs").innerHTML = html;
 }
 renderFavs();
 

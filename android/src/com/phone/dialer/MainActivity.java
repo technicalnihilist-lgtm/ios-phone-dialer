@@ -118,6 +118,13 @@ public class MainActivity extends Activity {
      */
     private boolean hadContacts, hadCallLog;
 
+    /**
+     * A full hydrate — which reads the call log as well as the contacts — has
+     * just been asked for, so the log-only refresh onResume() would run is the
+     * same query a second time, milliseconds later.
+     */
+    private boolean logFresh;
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -370,6 +377,14 @@ public class MainActivity extends Activity {
            because the dialog result arrives after the page has loaded. */
         if (accessChanged()) {
             requestHydrate();
+            /* requestHydrate() re-reads the contacts *and* the call log.
+               onResume() runs again right after this result arrives and, with
+               the access flags already remembered, took its "nothing changed"
+               branch — which asks for the call log on its own. That was the
+               same provider query, the same JSON, the same parse and the same
+               Recents re-render a second time, milliseconds after the full
+               read had already done all of it. Skip it for that one resume. */
+            logFresh = true;
         }
         /* onResume() runs again right after this result arrives; without this the
            very first grant re-read the whole contact list twice */
@@ -426,7 +441,7 @@ public class MainActivity extends Activity {
         if (web != null) {
             if (accessChanged()) {
                 requestHydrate();
-            } else if (pageReady) {
+            } else if (pageReady && !logFresh) {
                 /* The call log was read at boot and when the permission state
                    changed, and never again. A call that arrived while the app
                    was open — or one placed from any other app — was missing
@@ -450,7 +465,31 @@ public class MainActivity extends Activity {
                 }
             }
         }
+        /* the flag only ever covers the resume that follows the permission
+           result that set it */
+        logFresh = false;
         rememberAccess();
+    }
+
+    /**
+     * The WebView was never told when the system ran short of memory. Its
+     * renderer keeps a compiled-script cache, decoded images and a code cache
+     * alive for the life of the process, and on a low-memory device that is
+     * what gets the renderer killed — the one crash onRenderProcessGone exists
+     * to recover from. Only the levels that mean the page is no longer on
+     * screen are answered, so nothing visible is ever dropped and re-decoded.
+     */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level != TRIM_MEMORY_BACKGROUND && level != TRIM_MEMORY_MODERATE
+                && level != TRIM_MEMORY_COMPLETE) {
+            return;
+        }
+        if (web == null) return;
+        try {
+            web.freeMemory();
+        } catch (Exception ignored) { }
     }
 
     @Override

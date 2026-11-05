@@ -43,15 +43,28 @@ self.addEventListener("fetch", e => {
       .then(() => res, () => res);
   };
 
+  /* the cached copy, or a network error response when there is not one */
+  const offline = () => caches.match(req)
+    .then(hit => hit || caches.match("./index.html"))
+    /* with nothing cached this resolved to undefined, which respondWith()
+       rejects with a TypeError instead of showing an offline page */
+    .then(hit => hit || Response.error());
+
   if (req.mode === "navigate") {
     /* network first, so a new build actually reaches an installed app instead of
        serving the first index.html this device ever saw */
     e.respondWith(
-      fetch(req).then(store)
-        .catch(() => caches.match(req).then(hit => hit || caches.match("./index.html"))
-          /* with nothing cached this resolved to undefined, which respondWith()
-             rejects with a TypeError instead of showing an offline page */
-          .then(hit => hit || Response.error()))
+      fetch(req).then(res => {
+        /* An error status is not the app. This handed back whatever the host
+           answered — a 404 from a moved file, a 500 or a 502 from a host that
+           was mid-deploy, the error page of a proxy — and the offline copy was
+           only ever reached when fetch() rejected outright. A working,
+           installed dialer was then replaced by an error page until the next
+           successful load. Anything that is not a success now falls back to
+           the cache exactly like a failed request does. */
+        if (!res || !res.ok) return offline();
+        return store(res);
+      }).catch(offline)
     );
     return;
   }
