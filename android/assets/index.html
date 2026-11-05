@@ -2156,7 +2156,17 @@ addEventListener("resize", remeasureLayout);
 /* fonts.ready is a promise from an optional API: a WebView that answers it with
    an exception used to take the last statement of this script with it, and the
    All/Missed capsule stayed unpositioned until Recents was opened by hand. */
-try { if (document.fonts) document.fonts.ready.then(remeasureLayout); } catch (e) { }
+/* ...and try/catch only ever saw a *synchronous* throw. fonts.ready is a
+   promise, and a rejected one is not an exception here: nothing handled it, so
+   remeasureLayout() never ran and the same thing happened — the All/Missed
+   capsule sat at 0px and the number line kept the size it had before the font
+   swap — with an unhandled rejection in the log instead. The install prompt's
+   userChoice already takes its handler twice for this reason; do the same. */
+try {
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(remeasureLayout, remeasureLayout);
+  }
+} catch (e) { }
 syncSeg();
 </script>
 </body>

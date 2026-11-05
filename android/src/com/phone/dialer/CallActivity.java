@@ -469,11 +469,20 @@ public class CallActivity extends Activity {
     private void playTone(char c) {
         Call call = DialerInCallService.current;
         if (call == null) return;
+        /* The pending stop was cancelled before the new tone was started, so a
+           playDtmfTone() that threw — a call that had just disconnected, a
+           binder that had gone away — left the tone already sounding with
+           nothing left to stop it: a continuous DTMF tone under the call until
+           the call itself ended. Cancel and re-arm only once the new tone has
+           actually started; on a failure the previous key's stop stays armed
+           and silences the tone as it always would. */
         try {
-            ticker.removeCallbacks(stopTone);
             call.playDtmfTone(c);
-            ticker.postDelayed(stopTone, 160);
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            return;
+        }
+        ticker.removeCallbacks(stopTone);
+        ticker.postDelayed(stopTone, 160);
     }
 
     private void endCall() {

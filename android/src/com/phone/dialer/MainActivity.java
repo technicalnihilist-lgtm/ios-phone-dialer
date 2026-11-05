@@ -280,8 +280,17 @@ public class MainActivity extends Activity {
         if (web != null && pageReady) {
             try {
                 web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
-            } catch (Exception ignored) { }
-            return;
+                return;   /* delivered: there is nothing left to queue */
+            } catch (Exception e) {
+                /* The call threw — the renderer died between the null check
+                   above and this line, or the view was destroyed under us.
+                   Swallowing it and returning said "delivered" for a read that
+                   never reached the page, and the contacts and the call log
+                   were then never re-read: the lists sat on whatever they last
+                   held (or on the empty states) until the app was reopened.
+                   Fall through and queue it, which is what the caller asked
+                   for when the page was not ready in the first place. */
+            }
         }
         pendingHydrate = true;
     }
@@ -289,30 +298,46 @@ public class MainActivity extends Activity {
     /** Runs a read that was requested before the page could take it. */
     private void deliverPendingHydrate() {
         if (!pendingHydrate || !pageReady || web == null) return;
-        pendingHydrate = false;
         try {
             web.evaluateJavascript("window.__phoneHydrate&&window.__phoneHydrate()", null);
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            /* The flag was cleared before the call, so a bridge that had just
+               gone away threw into the catch and the owed read was gone with
+               it: no later page load would ever deliver it. Clear the flag only
+               once the page has actually taken the call. */
+            return;
+        }
+        pendingHydrate = false;
     }
 
     /**
      * Puts a number that arrived by tel: link on the keypad. Called when the page
      * finishes loading and again if a link arrives later; the field is cleared
-     * before the call so a number is never handed over twice.
+     * once the page has taken the number, so a number is never handed over
+     * twice and one that could not be handed over is not thrown away.
      */
     private void deliverPendingDial() {
         final String number = pendingDial;
         if (number == null || !pageReady || web == null) return;
-        pendingDial = null;
         String arg;
         try {
             arg = JSONObject.quote(number);
         } catch (Exception e) {
+            /* nothing can ever be delivered for a string that will not quote:
+               dropping it here is what stops it being retried for ever */
+            pendingDial = null;
             return;
         }
         try {
             web.evaluateJavascript("window.__phoneNumber&&window.__phoneNumber(" + arg + ")", null);
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            /* The number was cleared before the call, so a throw — the renderer
+               gone, the view destroyed — lost the number a tel: link carried
+               and the keypad stayed empty with nothing to retry. Keep it
+               queued; the next page load hands it over. */
+            return;
+        }
+        pendingDial = null;
     }
 
     /**
