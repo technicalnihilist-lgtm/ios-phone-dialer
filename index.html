@@ -821,6 +821,13 @@ function fmtCached(v) {
    Only a character outside ASCII can carry a diacritic, so anything else skips
    both passes and comes back as itself. Same answer, far less work on the load
    path and on every keystroke in the search box. */
+/* One space between words, and none at the ends. A name synced from a contacts
+   account is often stored with a non-breaking space or a run of spaces in it
+   ("Alice\u00a0Adams", "Bob  Brown"); the search key kept them verbatim, so the
+   name as anybody would type it matched nothing. \s covers \u00a0 and the other
+   Unicode spaces, and nothing else about the string is touched. */
+const normSpace = s => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+
 const NON_ASCII = /[^\x00-\x7f]/;
 const fold = s => {
   const t = String(s == null ? "" : s);
@@ -837,6 +844,11 @@ const T9 = {2:"abc",3:"def",4:"ghi",5:"jkl",6:"mno",7:"pqrs",8:"tuv",9:"wxyz"};
    runs once per contact for the whole address book. */
 const T9_KEY = Object.create(null);
 for (const k in T9) for (const ch of T9[k]) T9_KEY[ch] = k;
+/* A digit in a name was dropped from its T9 digits: only the letters were in the
+   table, so "Office 2" indexed as 633423 and typing the 2 the name actually
+   contains matched nothing at all. A digit is its own key on a real keypad; map
+   it to itself, so 633423 still matches and 6334232 now does too. */
+for (let n = 0; n <= 9; n++) T9_KEY[String(n)] = String(n);
 const toDigits = s => {
   const t = fold(s).toLowerCase();
   let out = "";
@@ -884,6 +896,12 @@ function findMatch() {
   if (value === matchForValue && contactGen === matchForGen) return matchFound;
   matchForValue = value;
   matchForGen = contactGen;
+  /* A USSD/MMI code is not a phone number: *123# and *#06# reach telecom as a
+     service request, not a call to a subscriber. The digits were pulled out of
+     them all the same, so typing *#06# over a contact whose number begins 06 —
+     or *1234567# over one saved as 1234567 — drew that person's chip under the
+     code, and tapping the chip rang them. No match for a value carrying * or #. */
+  if (/[*#]/.test(value)) return (matchFound = null);
   const d = value.replace(/\D/g, "");
   if (d.length < 3) return (matchFound = null);
   /* A fourth test used to sit here: lowerOf(p).startsWith(value.toLowerCase()).
@@ -903,6 +921,14 @@ function findMatch() {
          person actually dials; once enough has been typed to be unambiguous,
          compare the tail of the number too */
       (d.length >= 7 && tel.endsWith(d)) ||
+      /* ...and the same the other way round. A number dialled with its country
+         code — the way it is printed on a card, or pasted from a message — was
+         compared only against the whole of a locally saved number, so
+         +919876543210 matched no contact saved as 9876543210 at all. The extra
+         prefix is a country code, which is one to three digits; anything
+         longer is a different number that merely ends the same way. */
+      (tel.length >= 7 && d.length > tel.length && d.length - tel.length <= 3
+        && d.endsWith(tel)) ||
       t9Of(p).startsWith(d);
   }) || null;
   return matchFound;
@@ -1453,7 +1479,12 @@ function buildContactIdx() {
        out as a blank box, and the sort parked the row above the A's. Trim once
        here and use the trimmed name for the header, the search key and the
        ordering alike; the row itself still shows the name as it is stored. */
-    const name = String(p.n == null ? "" : p.n).trim();
+    /* ...and collapse the spaces *inside* the name as well, not just at the
+       ends. "Alice\u00a0Adams" (a non-breaking space, which is what a lot of synced
+       address books hold) and "Bob  Brown" kept those bytes in the search key,
+       so neither could be found by typing the name. The row still draws the
+       name exactly as it is stored — only the key it is found by changes. */
+    const name = normSpace(p.n);
     return {
       p: p,
       name: name,
@@ -1505,7 +1536,13 @@ function rowMarkup(e) {
   return html;
 }
 function renderContacts(q) {
-  const raw = q || "";
+  /* Trimmed, and with every run of spaces collapsed to one — the same shape the
+     index keys are built in. A search box that ends in a space is not a corner
+     case: the keyboards this app runs under put one there after a completed
+     word. "rao " used to be looked for verbatim, matched no key, and emptied
+     the list while the name sat right in front of the user; a lone space
+     dropped every single-word contact. */
+  const raw = normSpace(q);
   /* the query is folded the same way the stored names are, so typing "josé"
      finds "José" instead of nothing at all */
   const needle = fold(raw).toLowerCase();
