@@ -688,9 +688,41 @@ const AV_FALLBACK = ["#8e8e93", "#636366"];
    its first character: a few thousand contacts meant a few thousand throwaway
    arrays on the load path, and one more per avatar on every list render. Read
    the first code point in place instead. */
+/* One code point is still not one character. A flag is two regional indicators,
+   a family is several emoji joined by zero-width joiners, and "❤️" is a heart
+   followed by a variation selector — so a contact saved as "🇮🇳 India" had its
+   flag cut in half and drew a lone regional indicator, which the font renders as
+   a boxed letter, while "👨‍👩‍👧 Family" drew only the first figure and "👍🏽 Ravi"
+   lost its skin tone. The section header is built from the same function, so the
+   list showed the broken glyph there too. Take the whole cluster: the base
+   character, a second regional indicator when it is a flag, and then every mark,
+   variation selector, skin tone and ZWJ continuation that hangs off it. */
+const isExtend = cp => (cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x1ab0 && cp <= 0x1aff)
+  || (cp >= 0x1dc0 && cp <= 0x1dff) || (cp >= 0x20d0 && cp <= 0x20ff)
+  || (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xfe20 && cp <= 0xfe2f)
+  || (cp >= 0x1f3fb && cp <= 0x1f3ff) || (cp >= 0xe0020 && cp <= 0xe007f)
+  || (cp >= 0xe0100 && cp <= 0xe01ef);
+const isRegional = cp => cp >= 0x1f1e6 && cp <= 0x1f1ff;
 const firstCodePoint = s => {
   if (!s) return "";
-  return s.codePointAt(0) > 0xffff ? s.slice(0, 2) : s.charAt(0);
+  const n = s.length;
+  const cp0 = s.codePointAt(0);
+  let i = cp0 > 0xffff ? 2 : 1;
+  if (isRegional(cp0) && i < n && isRegional(s.codePointAt(i))) i += 2;
+  for (;;) {
+    const cp = s.codePointAt(i);
+    if (cp === undefined) break;
+    if (cp === 0x200d) {          /* ZWJ: take the joiner and the glyph it joins */
+      i += 1;
+      const next = s.codePointAt(i);
+      if (next === undefined) break;
+      i += next > 0xffff ? 2 : 1;
+      continue;
+    }
+    if (!isExtend(cp)) break;
+    i += cp > 0xffff ? 2 : 1;
+  }
+  return s.slice(0, i);
 };
 const initials = n => {
   const words = String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean);
@@ -1507,9 +1539,18 @@ let idxKeys = null;
 /* everything a row's markup is built from: the name it draws and is filed under,
    the number, and the avatar pair. Two contacts that agree on all of them draw
    the same row, so the entry (and its cached markup) can be kept as it is. */
+/* ...but it has to be the name the row actually DRAWS, not the normalised one
+   it is filed and searched under. rowMarkup() writes p.n as it is stored, and
+   data-name carries the same string, so a contact whose name changed only in
+   whitespace — a double space that collapsed on a re-sync, a leading space that
+   was fixed, a non-breaking space that came back as an ordinary one — produced
+   the identical key and kept the previous entry and its cached markup: the list
+   went on drawing the old name, and a call placed from that row was written into
+   Recents under it. Key on the raw name; the normalised one is only ever a
+   search key. It is also one regex pass per contact less on the load path. */
 const contactKey = p => {
   const c = avColors(p.c);
-  return normSpace(p.n) + "\u0000" + String(p.t == null ? "" : p.t) + "\u0000" + c[0] + "\u0000" + c[1];
+  return String(p.n == null ? "" : p.n) + "\u0000" + String(p.t == null ? "" : p.t) + "\u0000" + c[0] + "\u0000" + c[1];
 };
 function buildContactIdx() {
   let count = 0, same = idxKeys !== null;
@@ -2097,7 +2138,19 @@ function hydrateNative(logOnly) {
        t9Of()/telOf() would throw on it — and that throw came out of render(),
        so one malformed row stopped the number line updating for the rest of the
        session. Only objects can be contacts. */
-    list.forEach(p => { if (p && typeof p === "object") people.push(p); });
+    /* ...and only a contact that carries a number can be drawn. The Java side
+       already skips a Phone row with no number, and recRowMarkup() refuses a
+       person that is not an object for the call log, but this list took whatever
+       object it was handed: a contact with a blank or missing number became a
+       row with an empty name, an empty subtitle and data-tel="", filed under a
+       "#" heading — a row that does nothing at all when it is tapped. Keep the
+       same rule the bridge keeps. */
+    list.forEach(p => {
+      if (!p || typeof p !== "object") return;
+      const tel = p.t == null ? "" : String(p.t);
+      if (!tel.trim()) return;
+      people.push(p);
+    });
   }
   if (freshLog) {
     recents.length = 0;
