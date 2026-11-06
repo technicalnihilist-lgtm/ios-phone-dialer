@@ -68,12 +68,19 @@ Requires a JDK and Android build-tools. `android/build.sh` does everything: `aap
 ```bash
 cd android
 SDK=/path/to/android-sdk
-export JAVA_HOME=$SDK/jdk
-export PATH=$JAVA_HOME/bin:$SDK/build-tools/34.0.0:$PATH
 KEYSTORE=/path/to/phone.keystore bash build.sh   # -> android/Phone-Dialer.apk
 ```
 
-The script expects `$SDK/android-35/android.jar` and `$SDK/android-14` (build-tools 34); adjust the two variables at the top for your layout.
+Unpack the three downloads the runbook names into `$SDK`: the Adoptium JDK (it unpacks to a
+`jdk-17.0.x+y` directory, not `jdk`), `build-tools_r34-linux.zip` (unpacks to `android-14`) and
+`platform-35_r01.zip` (unpacks to `android-35`, and provides `android.jar`). The script finds the
+`jdk-*` directory itself and puts the JDK and build-tools on `PATH` for you — leave `JAVA_HOME`
+unset, or point it at the directory that was actually unpacked. Setting it to a path that does not
+exist makes the script stop with `no JDK found`, because it only searches when `JAVA_HOME` is empty.
+
+Without `KEYSTORE` the script builds and aligns the APK and then stops, leaving an unsigned
+`build/aligned.apk` and no `Phone-Dialer.apk`: never mint a key here, because an APK signed with a
+fresh one will not install over the build already on the device.
 
 ## Project layout
 
@@ -99,7 +106,7 @@ android/                 native app source
 ## Notes
 
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
-- The bundled `apk/Phone-Dialer.apk` is the 2.3 build (versionCode 6): the source is at 2.6.13 (versionCode 40) but the signing
+- The bundled `apk/Phone-Dialer.apk` is the 2.3 build (versionCode 6): the source is at 2.6.14 (versionCode 41) but the signing
   key was not available for this release, and an APK signed with a fresh key would not install over the existing one.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
 - There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
@@ -111,7 +118,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.6.13 (versionCode 40) |
+| Version | 2.6.14 (versionCode 41) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |
