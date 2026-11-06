@@ -1069,10 +1069,11 @@ del.addEventListener("pointerdown", () => {
 const isEditable = el => !!el && (el.isContentEditable === true ||
   /^(input|textarea|select)$/i.test(el.tagName || ""));
 /* something is floating over the keypad: the Liquid Glass sheet, or the Paste menu */
-const overlayOpen = () => {
-  const s = $("gsheet"), m = $("menu");
-  return !!((s && s.classList.contains("show")) || (m && m.classList.contains("show")));
-};
+/* both were looked up by id on every key a hardware keyboard sends; they are
+   the same two elements for the life of the page */
+const overlaySheet = $("gsheet"), overlayMenu = $("menu");
+const overlayOpen = () => !!((overlaySheet && overlaySheet.classList.contains("show")) ||
+                              (overlayMenu && overlayMenu.classList.contains("show")));
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { closeMenu(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1443,30 +1444,32 @@ function renderRecents(filter) {
 renderRecents("all");
 
 const seg = $("seg"), segpill = $("segpill");
+/* the two halves of the All/Missed control never change: the list was re-queried
+   from the DOM on every hydrate, on every filter tap and twice per moveSeg() */
+const segBtns = [...seg.querySelectorAll("button")];
 /* which Recents filter is selected — the pill is the only record of it */
 function recentsFilter() {
-  const b = seg.querySelectorAll("button")[1];
+  const b = segBtns[1];
   return b && b.classList.contains("on") ? "missed" : "all";
 }
 function moveSeg(i) {
-  const b = seg.querySelectorAll("button")[i];
+  const b = segBtns[i];
   segpill.style.left = b.offsetLeft + "px";
   segpill.style.width = b.offsetWidth + "px";
-  seg.querySelectorAll("button").forEach((x, k) => {
+  segBtns.forEach((x, k) => {
     x.classList.toggle("on", k === i);
     /* the selected half was only ever marked by a class, so a screen reader
        announced two identical buttons and no state */
     x.setAttribute("aria-pressed", k === i ? "true" : "false");
   });
 }
-seg.querySelectorAll("button").forEach((b, i) => {
+segBtns.forEach((b, i) => {
   b.addEventListener("click", () => { moveSeg(i); renderRecents(i ? "missed" : "all"); });
 });
 
 /* the All/Missed capsule measured 0px while Recents was hidden: re-measure when it appears */
 function syncSeg() {
-  const bs = [...seg.querySelectorAll("button")];
-  const i = Math.max(0, bs.findIndex(b => b.classList.contains("on")));
+  const i = Math.max(0, segBtns.findIndex(b => b.classList.contains("on")));
   segpill.classList.add("noanim"); moveSeg(i); void segpill.offsetWidth; segpill.classList.remove("noanim");
 }
 
@@ -1490,7 +1493,49 @@ const cmpName = (a, b) => nameCollator ? nameCollator.compare(a, b) : a.localeCo
  */
 let shownRows = null;
 const pickBuf = [];
+/* The entry a contact gets in the index, and the key that entry is looked up by:
+   the two fields the device can actually change, its name and its number.
+   Rebuilding the index for a read that brought the same book back meant
+   re-deriving six fields for every contact and re-sorting the lot with a
+   collator — measured at 42 ms for 3000 contacts — and, because the entries are
+   new objects, throwing away the markup cached on them and re-parsing every row
+   of the Contacts list if that tab was open. A reload is the common case (the
+   boot read, a permission result, a renderer restart), so compare the keys
+   first: when the book is the same, the index, its order and its cached markup
+   are all still exactly right. */
+let idxKeys = null;
+/* everything a row's markup is built from: the name it draws and is filed under,
+   the number, and the avatar pair. Two contacts that agree on all of them draw
+   the same row, so the entry (and its cached markup) can be kept as it is. */
+const contactKey = p => {
+  const c = avColors(p.c);
+  return normSpace(p.n) + "\u0000" + String(p.t == null ? "" : p.t) + "\u0000" + c[0] + "\u0000" + c[1];
+};
 function buildContactIdx() {
+  let count = 0, same = idxKeys !== null;
+  for (let i = 0; i < people.length; i++) {
+    const p = people[i];
+    if (!p) continue;
+    count++;
+    if (same && !idxKeys.has(contactKey(p))) same = false;
+  }
+  /* count === idxKeys.size rules out two contacts sharing one key, which the
+     index would then be one entry short of */
+  if (same && count === contactIdx.length && count === idxKeys.size) {
+    /* the same contacts, so the same rows in the same order: keep the index,
+       keep the markup cached on its entries, and keep shownRows pointing at
+       them so renderContacts() can still answer "already on screen". Only the
+       person objects are new — point the entries at those, so the previous
+       generation can be collected instead of being pinned by the index. */
+    for (let i = 0; i < people.length; i++) {
+      const p = people[i];
+      if (!p) continue;
+      const e = idxKeys.get(contactKey(p));
+      if (e) e.p = p;
+    }
+    return;
+  }
+  const keys = new Map();
   contactIdx = people.filter(p => p).map(p => {
     const tel = String(p.t == null ? "" : p.t);
     /* a name the device saved with a leading space ("  Bina Shah") was measured
@@ -1504,7 +1549,7 @@ function buildContactIdx() {
        so neither could be found by typing the name. The row still draws the
        name exactly as it is stored — only the key it is found by changes. */
     const name = normSpace(p.n);
-    return {
+    const entry = {
       p: p,
       name: name,
       key: fold(name).toLowerCase(),
@@ -1525,7 +1570,10 @@ function buildContactIdx() {
          on every keystroke */
       disp: fmt(tel)
     };
+    keys.set(contactKey(p), entry);
+    return entry;
   }).sort((a, b) => cmpName(a.name, b.name));
+  idxKeys = keys;
   contactGen++;   /* the rows changed: what is on screen is stale */
   /* ...and the list that was on screen stayed reachable through shownRows, which
      holds the *previous* generation's entries — each one carrying the markup it
