@@ -51,12 +51,33 @@ public class DialerInCallService extends InCallService {
      */
     private final List<Call> live = new ArrayList<Call>();
 
+    /**
+     * Every access to {@link #live} is made while holding its own monitor. The
+     * list is written from the telecom binder thread (onCallAdded,
+     * onCallRemoved) and cleared from the main thread in onDestroy(), and an
+     * ArrayList is not safe against that: a call arriving as the service was
+     * being torn down could add to the list while it was being emptied, which
+     * leaves the array in an inconsistent state — a size that no longer matches
+     * its contents, an index that reads past the end, or a call that survives a
+     * clear and is then handed back as "the most recent call" by a later
+     * onCallRemoved(). The fields beside this one are volatile for the same
+     * reason; the list needs a lock, not just visibility.
+     */
+    private final Object liveLock = new Object();
+
     /** Removes by identity — Call does not define equals(), and we want no surprises. */
     private boolean drop(Call call) {
-        for (int i = 0; i < live.size(); i++) {
-            if (live.get(i) == call) { live.remove(i); return true; }
+        synchronized (liveLock) {
+            for (int i = 0; i < live.size(); i++) {
+                if (live.get(i) == call) { live.remove(i); return true; }
+            }
         }
         return false;
+    }
+
+    /** Whether any call is still up, read under the same lock as every write. */
+    private boolean noCallsLeft() {
+        synchronized (liveLock) { return live.isEmpty(); }
     }
 
     @Override
@@ -86,7 +107,7 @@ public class DialerInCallService extends InCallService {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        live.clear();
+        synchronized (liveLock) { live.clear(); }
         instance = null;
         current = null;          /* was left pointing at a dead Call after the service died */
         audioRoute = CallAudioState.ROUTE_EARPIECE;
@@ -109,7 +130,9 @@ public class DialerInCallService extends InCallService {
         super.onCallAdded(call);
         /* a Set ignored a repeat add for free; a List would keep the duplicate and
            then hand it back as "the most recent call" after it had ended */
-        if (!live.contains(call)) live.add(call);
+        synchronized (liveLock) {
+            if (!live.contains(call)) live.add(call);
+        }
         current = call;
 
         String number = numberOf(call);
@@ -131,12 +154,14 @@ public class DialerInCallService extends InCallService {
         if (call == current) {
             /* with a second call still up, the in-call screen belongs to that
                one now — it used to be closed as if every call had ended */
-            current = live.isEmpty() ? null : live.get(live.size() - 1);
+            synchronized (liveLock) {
+                current = live.isEmpty() ? null : live.get(live.size() - 1);
+            }
             /* the screen was never told: after the second call hung up the header
                still showed the caller that had just gone, not the one still up */
             if (current != null) CallActivity.showIfOpen(numberOf(current));
         }
-        if (live.isEmpty()) {
+        if (noCallsLeft()) {
             /* The call session is over, and with it the two pieces of state the
                service was holding for it. Telecom drops the mute and the audio
                route when the last call goes, but these fields are this app's own

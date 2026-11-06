@@ -31,7 +31,7 @@ The Android build is a real dialer, not a mock: it reads your contacts and call 
 
 **Android (APK)** — grab it from the [latest release](https://github.com/technicalnihilist-lgtm/ios-phone-dialer/releases/latest) (or [`apk/Phone-Dialer.apk`](apk/Phone-Dialer.apk) in the repo), open it on the phone, and allow install from unknown sources when prompted. Android 7.0+ (API 24). Adaptive icon on Android 8+.
 
-On first launch it asks for contacts, call log, phone and microphone permissions. To use the in-call controls, tap **Set** on the banner and make Phone your default dialer.
+On first launch it asks for contacts, call log and phone permissions. The microphone is only requested when you tap **Record** during a call. To use the in-call controls, tap **Set** on the banner and make Phone your default dialer.
 
 **iPhone / Android (web app)** — open <https://technicalnihilist-lgtm.github.io/ios-phone-dialer/> in Safari or Chrome, then *Share → Add to Home Screen*. It launches full screen with its own icon and works offline.
 
@@ -99,7 +99,7 @@ android/                 native app source
 ## Notes
 
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
-- The bundled `apk/Phone-Dialer.apk` is the 2.3 build (versionCode 6): the source is at 2.6.9 (versionCode 36) but the signing
+- The bundled `apk/Phone-Dialer.apk` is the 2.3 build (versionCode 6): the source is at 2.6.10 (versionCode 37) but the signing
   key was not available for this release, and an APK signed with a fresh key would not install over the existing one.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
 - There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
@@ -111,7 +111,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.6.9 (versionCode 36) |
+| Version | 2.6.10 (versionCode 37) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |

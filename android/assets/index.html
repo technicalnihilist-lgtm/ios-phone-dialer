@@ -1388,12 +1388,20 @@ function recRowMarkup(r) {
     if (hit !== undefined) return hit;
   }
   const p = r.p || people[r.i];
-  if (!p) return "";
-  const html = `<button class="row ${r.kind}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
+  /* A row the device sent with no person — or with a bare string where the
+     person should be — was drawn anyway: the avatar fell back to "#" and both
+     text lines came out empty, so Recents showed a blank row that dialled
+     nothing. Only an object can be a person, the same rule initialsOf() and
+     hydrateNative() already apply. */
+  if (!p || typeof p !== "object") return "";
+  /* r.kind is the one value written into this markup without esc() — it is a
+     class name, so a stray quote or a space in it broke the attribute — and a
+     row that carried no kind at all was drawn as class="row undefined". */
+  const html = `<button class="row ${esc(r.kind || "")}" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
       <span class="t"><b>${esc(p.n)}</b><small>${esc(r.label)}</small></span>
       <time>${esc(r.when)}</time>
-      <span class="info" role="button" aria-label="Info"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
+      <span class="info" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 10.6V17"/><circle cx="12" cy="7.6" r=".9" fill="currentColor"/></svg></span>
     </button>`;
   if (stable) recRowHTML.set(r, html);
   return html;
@@ -1519,6 +1527,14 @@ function buildContactIdx() {
     };
   }).sort((a, b) => cmpName(a.name, b.name));
   contactGen++;   /* the rows changed: what is on screen is stale */
+  /* ...and the list that was on screen stayed reachable through shownRows, which
+     holds the *previous* generation's entries — each one carrying the markup it
+     cached. On a 3000-contact book that pins about 700 kB of dead row markup
+     after every reload (a permission result, a return to the foreground, a
+     renderer restart) until the Contacts tab is drawn again, which with the tab
+     closed may be never. Drop it here: the entries are new objects, so the
+     identity check in renderContacts() can only ever answer "different". */
+  shownRows = null;
 }
 /*
  * The markup of one row depends only on the contact it draws, and a contact

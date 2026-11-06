@@ -49,11 +49,18 @@ public class MainActivity extends Activity {
     private static final int REQ_PERMS = 10;
     private static final int REQ_ROLE = 11;
 
+    /**
+     * What the first launch asks for. The microphone used to sit in this list,
+     * so a dialer opened for the very first time asked for RECORD_AUDIO before
+     * the user had placed a single call — for a feature that Android 9 and later
+     * block for third-party apps, and that PRIVACY.md says is asked for only
+     * when it is used. CallActivity already requests it from the Record button,
+     * which is the only thing that needs it, so it is not asked for here.
+     */
     private static final String[] PERMS = new String[]{
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.CALL_PHONE,
-            Manifest.permission.RECORD_AUDIO
+            Manifest.permission.CALL_PHONE
     };
 
     /** Avatar palette, allocated once instead of once per contact and per call-log row. */
