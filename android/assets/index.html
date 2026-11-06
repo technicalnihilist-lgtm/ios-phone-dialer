@@ -1624,6 +1624,22 @@ function buildContactIdx() {
      closed may be never. Drop it here: the entries are new objects, so the
      identity check in renderContacts() can only ever answer "different". */
   shownRows = null;
+  /* The same generation was also still held by pickBuf — the scratch list
+     renderContacts() fills while it walks the index. It is emptied at the start
+     of the *next* render, not at the end of the last one, so with the Contacts
+     tab closed the old entries stayed in it for good: every entry, its cached
+     row markup, the person object behind it and the initials/T9/dial-digits
+     cached for that object. That is the whole previous address book, kept alive
+     beside the new one — exactly what the line above was added to stop. Clear it
+     with shownRows; the next render refills it from the new index. */
+  pickBuf.length = 0;
+  /* The rows already in the document are dead weight too: the list is rebuilt
+     from the new entries the next time it is drawn (shownRows is null, so it
+     always is), and until then #contacts held every one of the old buttons — a
+     few thousand nodes on a real address book. Only drop them when the Contacts
+     tab is not the one on screen; when it is, hydrateNative() re-renders the
+     list in this same task, and clearing first would only cost an extra parse. */
+  if (app.dataset.view !== "contacts") $("contacts").innerHTML = "";
 }
 /*
  * The markup of one row depends only on the contact it draws, and a contact

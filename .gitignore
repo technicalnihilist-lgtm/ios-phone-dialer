@@ -2,3 +2,4 @@ build/
 *.keystore
 hs_err_pid*.log
 alpha.apk
+Phone-Dialer.apk
