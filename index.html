@@ -680,6 +680,18 @@ let contactGen = 0;
    escaped character, thousands of them for a large address book. Hoisted. */
 const ESC_MAP = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
 const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ESC_MAP[c]);
+/* the characters that take up no room at all: a soft hyphen, a zero-width space,
+   joiner or non-joiner, the direction marks, a word joiner and a byte order
+   mark. A name copied out of a web page, a PDF or a chat carries them, and the
+   avatar of a name that begins with one drew nothing at all, because the first
+   "character" of the name was a character with no shape. */
+/* ZWNJ and ZWJ are deliberately not in this list: they carry no shape of their
+   own but they do change the one drawn around them — a family emoji, an Indic
+   conjunct — so a key built from the name may drop them and the section header
+   drawn from it may not. fold() removes those two; this table is only the
+   characters that mean nothing at all. */
+const INVISIBLE = /[\u00ad\u200b\u200e\u200f\u2060\ufeff]/g;
+const JOINERS = /[\u200c\u200d]/g;
 const AV_FALLBACK = ["#8e8e93", "#636366"];
 /* w[0] is a UTF-16 code unit, not a character. A name that starts with an emoji
    — or any glyph outside the basic plane — was cut in half and drawn as a
@@ -818,10 +830,36 @@ const isExtend = cp => (cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x1ab0 && cp <= 
   || (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xfe20 && cp <= 0xfe2f)
   || (cp >= 0x1f3fb && cp <= 0x1f3ff) || (cp >= 0xe0020 && cp <= 0xe007f)
   || (cp >= 0xe0100 && cp <= 0xe01ef) || cp === 0x200c
+  /* four characters belong to the letter in front of them and are not marks at
+     all, so neither the range list above nor the Mn/Mc table below can answer
+     for them. Thai and Lao SARA AM (U+0E33, U+0EB3) are the vowel of the
+     syllable but are stored as ordinary letters (category Lo), and the two
+     halfwidth katakana voiced sound marks (U+FF9E, U+FF9F) are modifier letters
+     (Lm). A name beginning "กำ" therefore lost its vowel — the avatar drew a
+     bare ก — and "ｶﾞ" drawn in halfwidth katakana lost the dakuten that makes it
+     a different kana. Unicode gives all four the grapheme property Extend or
+     SpacingMark, which is the only test that matters here. */
+  || cp === 0x0e33 || cp === 0x0eb3 || cp === 0xff9e || cp === 0xff9f
+  /* the enclosing marks (category Me) — U+0488..U+0489 and U+0A670..U+0A672 are
+     the two groups outside the 20D0..20FF block already listed above; they hang
+     a ring or a box around the letter before them */
+  || (cp >= 0x0488 && cp <= 0x0489) || (cp >= 0xa670 && cp <= 0xa672)
   /* everything the old range list did not cover — every other script's marks —
      asked of the table, which is where a name in Hindi or Arabic actually goes */
   || (cp > 0x036f && isMark(cp));
 const isRegional = cp => cp >= 0x1f1e6 && cp <= 0x1f1ff;
+/* Which part of a Hangul syllable a jamo is: 1 for a leading consonant (L), 2
+   for a vowel (V), 3 for a trailing consonant (T), 0 for anything else. A
+   Korean name can be stored as one precomposed syllable or as the jamo it is
+   built from — NFD always gives the second — and a jamo is an ordinary letter,
+   not a mark: the walk below knew marks, ZWJ and the Indic conjunct rule, and
+   none of them covers V or T. A name written "\u1100\u1175\u11B7" (김) was
+   therefore cut after the first jamo and the avatar drew a bare ᄀ, and the
+   section header above the row filed it under ᄀ too. */
+const hangulOf = cp => ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0xa960 && cp <= 0xa97c)) ? 1
+  : ((cp >= 0x1160 && cp <= 0x11a7) || (cp >= 0xd7b0 && cp <= 0xd7c6)) ? 2
+  : ((cp >= 0x11a8 && cp <= 0x11ff) || (cp >= 0xd7cb && cp <= 0xd7fb)) ? 3
+  : 0;
 const firstCodePoint = s => {
   if (!s) return "";
   const n = s.length;
@@ -833,6 +871,8 @@ const firstCodePoint = s => {
      letter is two */
   const joins = isConsonant(cp0);
   let linked = false;
+  /* the jamo state of the cluster so far, or 0 when it did not start with one */
+  let hangul = hangulOf(cp0);
   for (;;) {
     const cp = s.codePointAt(i);
     if (cp === undefined) break;
@@ -842,6 +882,18 @@ const firstCodePoint = s => {
       if (next === undefined) break;
       i += next > 0xffff ? 2 : 1;
       continue;
+    }
+    if (hangul) {
+      /* rule GB6..GB8: L takes L or V, V takes V or T, T takes T. Anything else
+         is a new letter, so the state is dropped and the walk carries on with
+         the ordinary tests below. */
+      const k = hangulOf(cp);
+      if (k && (hangul === 1 ? k <= 2 : hangul === 2 ? k >= 2 : k === 3)) {
+        hangul = k;
+        i += cp > 0xffff ? 2 : 1;
+        continue;
+      }
+      hangul = 0;
     }
     if (isExtend(cp)) {
       /* a virama is a mark like any other, but it also binds the letter that
@@ -860,7 +912,8 @@ const firstCodePoint = s => {
   return s.slice(0, i);
 };
 const initials = n => {
-  const words = String(n == null ? "" : n).trim().split(/\s+/).filter(Boolean);
+  const words = String(n == null ? "" : n).replace(INVISIBLE, "").trim()
+    .split(/\s+/).filter(Boolean);
   const out = [];
   for (let i = 0; i < words.length && out.length < 2; i++) {
     const c = firstCodePoint(words[i]);
@@ -993,15 +1046,50 @@ function fmtCached(v) {
    ("Alice\u00a0Adams", "Bob  Brown"); the search key kept them verbatim, so the
    name as anybody would type it matched nothing. \s covers \u00a0 and the other
    Unicode spaces, and nothing else about the string is touched. */
-const normSpace = s => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+/* ...but \s does not cover the characters that take up no room at all: a
+   zero-width space, a zero-width joiner or non-joiner, a word joiner, a byte
+   order mark and a soft hyphen. They arrive with any name copied out of a web
+   page, a PDF or a chat, and they sat inside the key, so "Ra\u200bvi" could not
+   be found by typing "ravi" — the letters on screen and the letters in the box
+   differed by a character nobody can see — and a name that *begins* with one was
+   filed under a section header of nothing at all. Strip them from the key; the
+   row still draws the name exactly as it is stored. */
+const normSpace = s => String(s == null ? "" : s).replace(INVISIBLE, "")
+  .replace(/\s+/g, " ").trim();
 
 const NON_ASCII = /[^\x00-\x7f]/;
+/* Every mark NFD leaves behind is not a diacritic: the Arabic harakat and the
+   Hebrew points are vowels and accents that most people leave out when they
+   type a name, so "مُحَمَّد" — which is how an address book often stores it — could
+   not be found by typing "محمد", and "שָׁלוֹם" not by typing "שלום". They are
+   marks, not letters, so dropping them from the key costs nothing: the Indic
+   vowel signs, which spell the word and must stay, are in none of these
+   ranges. */
+const VOCALIC = /[\u0300-\u036f\u0591-\u05bd\u05bf\u05c1-\u05c2\u05c4-\u05c5\u05c7\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7-\u06e8\u06ea-\u06ed]/g;
+/* The other half of the same problem: NFD splits an accented letter into a base
+   and a mark, but a few Latin letters are letters in their own right and have
+   no decomposition at all. "Søren" could not be found by typing "soren",
+   "Łukasz" not by "lukasz", and "Straße" not by "strasse" — the folded key was
+   the original letter, which is not on any keyboard in the search box. Give
+   each one the letters it sounds as. */
+const LATIN_MAP = {
+  "ø": "o", "Ø": "O", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ð": "D", "Ð": "D",
+  "ħ": "h", "Ħ": "H", "ı": "i", "ŋ": "n", "Ŋ": "N", "ŧ": "t", "Ŧ": "T",
+  "þ": "TH", "Þ": "TH", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE",
+  "ß": "ss", "ẞ": "SS"
+};
+const LATIN_ODD = /[øØłŁđĐðÐħĦıŋŊŧŦþÞæÆœŒßẞ]/g;
 const fold = s => {
   const t = String(s == null ? "" : s);
   if (!NON_ASCII.test(t)) return t;
+  let out = t;
   try {
-    return t.normalize ? t.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : t;
-  } catch (e) { return t; }
+    if (t.normalize) out = t.normalize("NFD").replace(VOCALIC, "");
+  } catch (e) { out = t; }
+  /* the two joiners are part of what is drawn, never of what is typed: a name
+     holding a ZWNJ inside a conjunct could not be found by typing the letters
+     around it, and the key is never displayed */
+  return out.replace(JOINERS, "").replace(LATIN_ODD, c => LATIN_MAP[c]);
 };
 
 /* T9 lookup: match a contact by digits or by the letters on the keys */
