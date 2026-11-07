@@ -191,6 +191,18 @@ public class CallActivity extends Activity {
                     if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
                     if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
                     a.releaseRecorderOffThread();
+                    /* The caller this screen is now showing also has to be the
+                       caller a *re-created* screen shows. onNewIntent()'s
+                       sibling paths put the number in the intent, and onCreate()
+                       reads it from there; this one moves the screen to another
+                       call without a new intent, so after a font-size or
+                       density change (or a low-memory restart) the fresh screen
+                       repainted the caller that had just hung up. Keep the
+                       intent in step with the header. */
+                    try {
+                        Intent own = a.getIntent();
+                        if (own != null && number != null) own.putExtra("number", number);
+                    } catch (Exception ignored) { }
                     a.showCaller(number);
                     /* the status line still held the finished call's duration —
                        the ticker only repaints it on its next pass, up to a
@@ -362,6 +374,16 @@ public class CallActivity extends Activity {
             nameView.setText(n);
             return;
         }
+        /* Paint the number now and let the lookup replace it. With contacts access
+           granted the header was not touched until PhoneLookup answered, so a
+           second call arriving over this screen showed the *previous* caller's
+           name over the new caller's number for as long as the provider took to
+           answer — and on the very first call the header stayed blank instead of
+           showing the number that was ringing. Same text as before once the
+           lookup lands; setTextIfChanged() keeps it from requesting a layout for
+           a string that is already on screen, which is the common case for a
+           number that is not in the address book. */
+        setTextIfChanged(nameView, n);
         LOOKUPS.execute(new Runnable() {
             @Override
             public void run() {
@@ -370,7 +392,7 @@ public class CallActivity extends Activity {
                     @Override
                     public void run() {
                         if (seq != lookupSeq || !n.equals(shownNumber)) return;
-                        nameView.setText(looked != null ? looked : n);
+                        setTextIfChanged(nameView, looked != null ? looked : n);
                     }
                 });
             }
@@ -395,6 +417,14 @@ public class CallActivity extends Activity {
             if (intent.getBooleanExtra(EXTRA_KEYPAD, false) && keypadPanel != null) {
                 keypadPanel.setVisibility(View.VISIBLE);
             }
+            /* A resume intent names the call the system wants on screen. It was
+               only ever used to reopen the keypad, so when the screen had been
+               left on a caller that had since ended, "return to call" brought
+               it back still showing that caller's name. Paint the one it names;
+               for the usual case — the call already on screen — showCaller()
+               sees the same number and does nothing at all. */
+            String resumed = intent.getStringExtra("number");
+            if (resumed != null && !resumed.isEmpty()) showCaller(resumed);
             refreshStatus();
             return;
         }

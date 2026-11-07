@@ -1369,6 +1369,12 @@ let pressT = null, pressX = 0, pressY = 0;
    asking for. Only the empty part of the area is a long-press target. */
 dialtop.addEventListener("pointerdown", e => {
   if (e.target.closest("button")) return;
+  /* Only a primary press may start the long press. The tab bar already refuses
+     anything else; this handler did not, so a right-click on the empty area
+     above the keypad armed the timer and opened the Paste menu on a button the
+     user never asked for. Touch pointers always report button 0, so the finger
+     path is unchanged. */
+  if (e.button !== 0) return;
   pressX = e.clientX; pressY = e.clientY;
   clearTimeout(pressT);
   pressT = setTimeout(() => { pressT = null; openMenu(pressX, pressY); }, 480);
