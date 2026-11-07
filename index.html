@@ -527,9 +527,16 @@ button{font-family:inherit;color:inherit}
   -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
   box-shadow:var(--glassedge),0 18px 48px rgba(0,0,0,.4);
   transform:translateY(40px) scale(.9);transform-origin:50% 100%;opacity:0;visibility:hidden;
+  /* The fade-out is .25s but `visibility` was held at `visible` for the whole
+     .8s spring, so for the .55s in between the sheet was invisible and still
+     hit-tested: its box (top to bottom of the keypad's lower rows and the
+     green Call button) swallowed every tap made right after tapping Done.
+     Nothing about how it looks changes — a closed sheet simply stops taking
+     input the moment it stops being drawn. */
+  pointer-events:none;
   transition:transform .8s var(--spring),opacity .25s ease,visibility 0s .8s;
 }
-.gsheet.show{transform:none;opacity:1;visibility:visible;transition:transform .8s var(--spring),opacity .25s ease,visibility 0s}
+.gsheet.show{transform:none;opacity:1;visibility:visible;pointer-events:auto;transition:transform .8s var(--spring),opacity .25s ease,visibility 0s}
 .gs-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .gs-h b{font-size:17px;font-weight:600}
 .gs-h button{border:0;background:none;color:var(--blue);font-size:17px;font-weight:600;cursor:pointer;padding:2px 4px;transition:transform .7s var(--spring)}
@@ -2193,8 +2200,12 @@ function behindCall(hidden) {
   }
   const gs = $("gsheet");
   if (gs) {
-    gs.setAttribute("aria-hidden", (hidden || !gs.classList.contains("show")) ? "true" : "false");
-    try { gs.inert = hidden; } catch (e) { }
+    /* the sheet's own open()/close() decides whether it is inert; a call only
+       ever adds to that. Setting it to `hidden` alone made a closed sheet
+       focusable again the moment the call ended. */
+    const gsOpen = gs.classList.contains("show");
+    gs.setAttribute("aria-hidden", (hidden || !gsOpen) ? "true" : "false");
+    try { gs.inert = hidden || !gsOpen; } catch (e) { }
   }
 }
 
@@ -2486,8 +2497,17 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     sheet.classList.toggle("show", on);
     gear.classList.toggle("on", on);
     sheet.setAttribute("aria-hidden", String(!on));
+    /* aria-hidden says nothing to the tab order: while the sheet is fading out
+       (or already invisible) its five sliders and its Done button are still
+       focusable, so Tab and a screen reader could walk into a panel nobody can
+       see. inert takes the closed sheet out of both, on the engines that have
+       it; the stylesheet's pointer-events covers the rest. */
+    try { sheet.inert = !on; } catch (e) { }
     if (on !== was) buzz(6);
   }
+  /* the sheet starts closed, and open() is only ever reached from a tap: mark
+     it inert now so the state holds from the first frame */
+  try { sheet.inert = true; } catch (e) { }
   gear.addEventListener("click", () => open(!sheet.classList.contains("show")));
   $("gsDone").addEventListener("click", () => open(false));
   document.addEventListener("pointerdown", e => {
