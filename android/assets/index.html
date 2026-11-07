@@ -374,11 +374,16 @@ button{font-family:inherit;color:inherit}
 }
 .menu button:active{background:var(--fill)}
 
-@keyframes inR{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
-@keyframes inL{from{opacity:0;transform:translateX(-26px)}to{opacity:1;transform:none}}
-.app.goR .view,.app.goL .view{animation-duration:.3s;animation-timing-function:cubic-bezier(.2,.8,.2,1);animation-fill-mode:both}
-.app.goR .view{animation-name:inR}
-.app.goL .view{animation-name:inL}
+/* The 0.3s slide transition that used to run the page change lived here, as a
+   duration/timing pair plus an animation-name pointing at the two keyframes
+   below. The spring transition further down sets the whole `animation`
+   shorthand on the same selector (`.app.goR .view` / `.app.goL .view`, same
+   specificity, later in the sheet), and a shorthand resets every longhand it
+   covers — name, duration, timing function and fill mode all of them. So these
+   five lines had not had any effect since that block was written: they only
+   made it look as though the page transition ran twice at two speeds. Removed
+   together with the two keyframes nothing else referenced. */
+
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.001s!important;transition-duration:.001s!important}
 }
@@ -679,7 +684,14 @@ let contactGen = 0;
    every list render escapes every name and number it draws — a fresh object per
    escaped character, thousands of them for a large address book. Hoisted. */
 const ESC_MAP = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
-const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ESC_MAP[c]);
+/* the pattern was written as a literal inside esc(), and a regex literal is a
+   fresh RegExp object every time it is evaluated — one allocation per escaped
+   value, and every row of every list escapes its name, its number and its
+   subtitle, on every keystroke in the search box. Hoisted beside the table it
+   indexes, so the hot path does the replace and nothing else. String.replace
+   with a global regex resets lastIndex itself, so sharing it is safe. */
+const ESC_RE = /[&<>"']/g;
+const esc = v => String(v == null ? "" : v).replace(ESC_RE, c => ESC_MAP[c]);
 /* the characters that take up no room at all: a soft hyphen, a zero-width space,
    joiner or non-joiner, the direction marks, a word joiner and a byte order
    mark. A name copied out of a web page, a PDF or a chat carries them, and the
@@ -862,6 +874,27 @@ const hangulOf = cp => ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0xa960 && cp <=
   : 0;
 const firstCodePoint = s => {
   if (!s) return "";
+  /* A name can begin with a character that has nothing to hang off: a
+     zero-width joiner or non-joiner left behind by a copy-paste, a combining
+     mark or an Indic vowel sign whose base letter was lost in a sync, or the
+     vowel/final jamo of an NFD-normalised Korean name. The cluster walk below
+     stops at the first one, because everything it knows how to extend needs a
+     base character first — so the avatar of "‌Bina" drew an empty circle and the
+     section header above the row was a blank strip with a row under it. Skip
+     that leading run and start the cluster at the first character that can
+     actually be drawn; a name made of nothing else still falls back to "#". */
+  let start = 0;
+  for (;;) {
+    const cp = s.codePointAt(start);
+    if (cp === undefined) return "";
+    /* L (leading) jamo is a valid start; V and T are not */
+    if (cp === 0x200c || cp === 0x200d || isExtend(cp) || hangulOf(cp) > 1) {
+      start += cp > 0xffff ? 2 : 1;
+      continue;
+    }
+    break;
+  }
+  if (start) s = s.slice(start);
   const n = s.length;
   const cp0 = s.codePointAt(0);
   let i = cp0 > 0xffff ? 2 : 1;
@@ -1308,12 +1341,24 @@ function bump() {
       { duration: 650, easing: springEase });
   } catch (e) { numAnim = null; }
 }
+/* Haptics are a nicety, and navigator.vibrate is one of the optional platform
+   APIs this page already treats that way everywhere else: it is missing on some
+   WebViews and it can throw where it exists (a document that has lost user
+   activation, a VIBRATE permission that was refused). Every call was guarded
+   only by `if (navigator.vibrate)`, which checks that the method exists and not
+   that it works — and one of the five sat in placeCall() between the row being
+   written into Recents and the number being handed to telecom, so a throw there
+   left a row for a call that was never placed, with nothing on screen to say
+   so. One guard, used by all of them. */
+function buzz(ms) {
+  try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { }
+}
 function add(c) {
   if (value.length >= 20) return;
   value += c;
   render();
   bump();
-  if (navigator.vibrate) navigator.vibrate(6);
+  buzz(6);
 }
 
 /* same consumed-tap rule as the keypad: holding delete past the old expiry
@@ -1396,7 +1441,7 @@ function openMenu(x, y) {
   const w = menu.offsetWidth;   /* only the width is needed; the height read was unused and forced a layout */
   menu.style.left = Math.max(8, Math.min(x - r.left - w / 2, r.width - w - 8)) + "px";
   menu.style.top = Math.max(8, y - r.top + 10) + "px";
-  if (navigator.vibrate) navigator.vibrate(6);
+  buzz(6);
 }
 function closeMenu() { $("menu").classList.remove("show"); }
 document.addEventListener("pointerdown", e => {
@@ -2069,7 +2114,7 @@ function placeCall(number, name) {
   dialed = dialed.slice(0, 40);
   try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
   renderRecents(recentsFilter());
-  if (navigator.vibrate) navigator.vibrate(8);
+  buzz(8);
   if (window.PhoneNative && PhoneNative.dial) {
     /* the bridge can already be gone (Activity torn down, page kept alive): an
        exception here left the tap with no effect at all and nothing to catch it */
@@ -2145,7 +2190,7 @@ function startCall(number, person) {
        1 Hz timer while hidden; visibilitychange restarts it on return */
     if (!document.hidden) startCallTimer();
   }, 2600);
-  if (navigator.vibrate) navigator.vibrate(10);
+  buzz(10);
 }
 function endCall() {
   clearInterval(callTimer); clearTimeout(startCall.t);
@@ -2387,7 +2432,7 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     sheet.classList.toggle("show", on);
     gear.classList.toggle("on", on);
     sheet.setAttribute("aria-hidden", String(!on));
-    if (navigator.vibrate && on !== was) navigator.vibrate(6);
+    if (on !== was) buzz(6);
   }
   gear.addEventListener("click", () => open(!sheet.classList.contains("show")));
   $("gsDone").addEventListener("click", () => open(false));
