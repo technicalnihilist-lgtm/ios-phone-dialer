@@ -1,4 +1,7 @@
 const CACHE = "phone-v2";
+/* every cache this app owns starts with this, so the activate handler below can
+   tell its own from the ones other apps on the same origin keep */
+const PREFIX = "phone-";
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest",
   "./icons/icon-180.png", "./icons/icon-192.png", "./icons/icon-512.png"
@@ -16,7 +19,15 @@ self.addEventListener("install", e => {
 self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      /* Cache storage is per origin, and this app is published from a project
+         page on a shared host: every other app served from the same account
+         keeps its caches in the same store. This deleted every cache on the
+         origin that was not this one, so activating the dialer's worker wiped
+         the caches of unrelated apps — their next load found nothing cached and
+         had to fetch every asset again. Only the caches this app wrote are ours
+         to drop, so match them by name. */
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k.indexOf(PREFIX) === 0)
+        .map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

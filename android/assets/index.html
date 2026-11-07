@@ -1030,7 +1030,14 @@ KEYS.forEach(([d, l], n) => {
     add(d);
   });
   if (d === "0") {
-    b.addEventListener("pointerdown", () => {
+    b.addEventListener("pointerdown", e => {
+      /* Only a primary press may start the long press. The empty area above the
+         keypad and the tab bar already refuse anything else; this handler and
+         the delete key's did not, so a right-click — or a pen's secondary
+         button, or a mouse held down over the key — armed the 500 ms timer and
+         put a "+" into the number, and the same press on Delete wiped the whole
+         number after 600 ms. Nothing on screen had been held to ask for it. */
+      if (e.button !== 0) return;
       /* a second finger on the same key replaced the handle, so the first timer
          could no longer be cancelled and still fired its own "+" */
       clearTimeout(zeroHold);
@@ -1368,7 +1375,10 @@ del.addEventListener("click", () => {
   value = value.slice(0, -1); render(); bump();
 });
 let hold;
-del.addEventListener("pointerdown", () => {
+del.addEventListener("pointerdown", e => {
+  /* same as the 0 key: only a primary press may arm the long press, or a
+     right-click clears a number the user never asked to clear */
+  if (e.button !== 0) return;
   /* same as the 0 key: an orphaned second timer cleared a number the user had
      already started typing again */
   clearTimeout(hold);
@@ -2324,6 +2334,22 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
       card.classList.remove("show");
     });
     card.classList.add("show");
+    /* The role can also be granted from the system Settings screen, or by the
+       dialog this card opens, while the page stays up — and the page is never
+       reloaded after it (a reload would throw away a half-typed number). So the
+       answer above was the only one this card ever got: once the role was held,
+       a card still offering to set it stayed on screen, and its button fell
+       through to the legacy ACTION_CHANGE_DEFAULT_DIALER intent, which answered
+       with a "set Phone as your default dialer in Settings" toast for an app
+       that already was one. Ask again whenever the page comes back to the
+       front, which is exactly when the user has returned from Settings or the
+       dialog. */
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      let held = false;
+      try { held = !!PhoneNative.isDefaultDialer(); } catch (e) { return; }
+      if (held) card.classList.remove("show");
+    });
     return;
   }
   /* a missing or throwing matchMedia must not stop the page booting: no answer
@@ -2403,39 +2429,52 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     if (document.hidden) flushIfPending();
   });
 
-  function apply(save) {
+  /* One field's own paint: the derived custom property it feeds, and its row.
+     A drag changes exactly one field, and every frame of it used to rewrite all
+     five of the root properties and all five rows. A write to a custom property
+     on <html> invalidates style for the whole document, so dragging the
+     transparency slider re-resolved the glass blur, the tab bar, the sheet and
+     the ambient layer sixty times a second for four values that had not
+     changed — and it wrote the dragged slider's own .value back into the range
+     input under the finger, which resets its thumb mid-gesture. */
+  function paint(k) {
     const r = document.documentElement.style;
-    r.setProperty("--g-a", (0.8 * (1 - G.v / 100)).toFixed(3));
-    r.setProperty("--g-blur", G.blur + "px");
-    r.setProperty("--g-sat", G.sat + "%");
-    r.setProperty("--g-edge", G.edge / 100);
-    r.setProperty("--g-glow", G.glow / 100);
-    FIELDS.forEach(([k, , lo, hi, , u]) => {
-      const i = ins[k]; if (!i) return;
-      i.el.value = G[k];
-      i.el.style.setProperty("--p", ((G[k] - lo) / (hi - lo) * 100) + "%");
-      i.out.textContent = G[k] + u;
-    });
-    if (save) {
-      clearTimeout(saveT);
-      saveT = setTimeout(flush, 250);
-    }
+    if (k === "v") r.setProperty("--g-a", (0.8 * (1 - G.v / 100)).toFixed(3));
+    else if (k === "blur") r.setProperty("--g-blur", G.blur + "px");
+    else if (k === "sat") r.setProperty("--g-sat", G.sat + "%");
+    else if (k === "edge") r.setProperty("--g-edge", G.edge / 100);
+    else if (k === "glow") r.setProperty("--g-glow", G.glow / 100);
+    const i = ins[k];
+    if (!i) return;
+    /* the slider being dragged already holds this value; assigning it again is
+       a write for nothing, and only the track fill and the readout are stale */
+    if (i.el.value !== String(G[k])) i.el.value = G[k];
+    i.el.style.setProperty("--p", ((G[k] - i.lo) / (i.hi - i.lo) * 100) + "%");
+    i.out.textContent = G[k] + i.u;
   }
-  FIELDS.forEach(([k, name, lo, hi, step]) => {
+  function saveSoon() {
+    clearTimeout(saveT);
+    saveT = setTimeout(flush, 250);
+  }
+  function apply(save) {
+    for (let f = 0; f < FIELDS.length; f++) paint(FIELDS[f][0]);
+    if (save) saveSoon();
+  }
+  FIELDS.forEach(([k, name, lo, hi, step, u]) => {
     const row = document.createElement("div");
     row.className = "gs-row";
     row.innerHTML = `<label for="gs-${k}">${name}</label><output></output><input id="gs-${k}" type="range" min="${lo}" max="${hi}" step="${step}">`;
     rows.appendChild(row);
     const el = row.querySelector("input"), out = row.querySelector("output");
-    ins[k] = { el, out };
+    ins[k] = { el, lo: lo, hi: hi, u: u, out: out };
     /* a drag fires 'input' more than once per frame and every one of them
        repainted the glass; coalesce to one repaint per frame, as the contacts
-       search box already does */
+       search box already does — and repaint only the field that moved */
     el.addEventListener("input", () => {
       G[k] = +el.value;
       if (slideQueued) return;
       slideQueued = true;
-      requestAnimationFrame(() => { slideQueued = false; apply(true); });
+      requestAnimationFrame(() => { slideQueued = false; paint(k); saveSoon(); });
     });
   });
   document.querySelectorAll(".gs-pre button").forEach(b =>
