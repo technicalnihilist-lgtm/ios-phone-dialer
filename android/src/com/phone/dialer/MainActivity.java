@@ -14,6 +14,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.CallLog;
 import android.provider.ContactsContract;
 import android.telecom.TelecomManager;
@@ -126,11 +127,15 @@ public class MainActivity extends Activity {
     private boolean hadContacts, hadCallLog;
 
     /**
-     * A full hydrate — which reads the call log as well as the contacts — has
-     * just been asked for, so the log-only refresh onResume() would run is the
-     * same query a second time, milliseconds later.
+     * When a full hydrate — which reads the call log as well as the contacts —
+     * was asked for, so the log-only refresh onResume() would run milliseconds
+     * later can be skipped: it is the same query a second time. A timestamp and
+     * not a flag, because the resume it was meant to cover does not always
+     * arrive — the permission dialog is not guaranteed to pause the activity —
+     * and a flag left standing skipped the log refresh of the *next* return to
+     * the foreground instead, which is the one read a missed call depends on.
      */
-    private boolean logFresh;
+    private long logFreshAt;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -416,7 +421,7 @@ public class MainActivity extends Activity {
                same provider query, the same JSON, the same parse and the same
                Recents re-render a second time, milliseconds after the full
                read had already done all of it. Skip it for that one resume. */
-            logFresh = true;
+            logFreshAt = SystemClock.uptimeMillis();
         }
         /* onResume() runs again right after this result arrives; without this the
            very first grant re-read the whole contact list twice */
@@ -473,7 +478,7 @@ public class MainActivity extends Activity {
         if (web != null) {
             if (accessChanged()) {
                 requestHydrate();
-            } else if (pageReady && !logFresh) {
+            } else if (pageReady && SystemClock.uptimeMillis() - logFreshAt > 1500) {
                 /* The call log was read at boot and when the permission state
                    changed, and never again. A call that arrived while the app
                    was open — or one placed from any other app — was missing
@@ -497,9 +502,9 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        /* the flag only ever covers the resume that follows the permission
-           result that set it */
-        logFresh = false;
+        /* the timestamp only ever covers the resume that follows the permission
+           result that set it, which is at most a few milliseconds away */
+        logFreshAt = 0;
         rememberAccess();
     }
 

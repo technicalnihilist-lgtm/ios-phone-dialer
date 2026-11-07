@@ -104,6 +104,22 @@ public class DialerInCallService extends InCallService {
         if (state != null) audioRoute = state.getRoute();
     }
 
+    /**
+     * The system asking for the in-call screen — the "return to call" chip, a
+     * headset button, TelecomManager.showInCallScreen(). Nothing was ever done
+     * with it, and this screen is excludeFromRecents with no ongoing-call
+     * notification behind it: once the user pressed Home mid-call there was no
+     * way back to the mute, speaker, keypad or even the hang-up button, and the
+     * call could only be ended from the other side. Hand it to the screen.
+     */
+    @Override
+    public void onBringToForeground(boolean showDialpad) {
+        super.onBringToForeground(showDialpad);
+        Call call = current;
+        if (call == null) return;
+        CallActivity.bringToFront(this, numberOf(call), showDialpad);
+    }
+
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -159,7 +175,7 @@ public class DialerInCallService extends InCallService {
             }
             /* the screen was never told: after the second call hung up the header
                still showed the caller that had just gone, not the one still up */
-            if (current != null) CallActivity.showIfOpen(numberOf(current));
+            if (current != null) CallActivity.showIfOpen(this, numberOf(current));
         }
         if (noCallsLeft()) {
             /* The call session is over, and with it the two pieces of state the

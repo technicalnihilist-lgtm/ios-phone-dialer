@@ -54,6 +54,17 @@ public class CallActivity extends Activity {
     private String shownNumber = "";
 
     /**
+     * Set on an intent that only asks for this screen to be shown again — the
+     * system's own "return to the call" affordance, or the service falling back
+     * to a call that is still up. Such an intent is not a new call, so it must
+     * not reset the clock, the mute or an open keypad the way onCallAdded()'s
+     * intent does.
+     */
+    static final String EXTRA_RESUME = "resume";
+    /** Set when the system asked for the screen with the DTMF keypad open. */
+    static final String EXTRA_KEYPAD = "keypad";
+
+    /**
      * One background thread for contact lookups. The lookup used to run on the
      * UI thread from onCreate() and onNewIntent(), so a slow or large contacts
      * provider stalled the in-call screen while it was being opened.
@@ -117,10 +128,45 @@ public class CallActivity extends Activity {
         }
     };
 
+    /**
+     * Brings the in-call screen forward, or opens one when there is none. The
+     * system asks for this through InCallService.onBringToForeground(), and the
+     * service asks for it when the call on screen ends while another one is
+     * still up: this screen is excludeFromRecents and the app posts no ongoing
+     * call notification, so without it a call whose screen had gone — the user
+     * pressed Home, or the activity was destroyed under memory pressure — had
+     * no controls and no way to be hung up from inside the app at all.
+     */
+    static void bringToFront(Context ctx, String number, boolean showDialpad) {
+        if (ctx == null) return;
+        Intent i = new Intent(ctx, CallActivity.class);
+        /* REORDER_TO_FRONT with SINGLE_TOP puts the instance that already exists
+           back on screen and delivers onNewIntent(); without one, the activity
+           is created and reads the number from this same intent. */
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (number != null && !number.isEmpty()) i.putExtra("number", number);
+        i.putExtra(EXTRA_RESUME, true);
+        if (showDialpad) i.putExtra(EXTRA_KEYPAD, true);
+        try {
+            ctx.startActivity(i);
+        } catch (Exception ignored) {
+            /* no way to show it: nothing better to do than leave the call as it is */
+        }
+    }
+
     /** Repaints the header when the call on screen changes without a new intent. */
-    public static void showIfOpen(final String number) {
+    public static void showIfOpen(Context ctx, final String number) {
         final CallActivity a = open;
-        if (a == null) return;
+        if (a == null) {
+            /* The screen is gone — it was destroyed under memory pressure, or the
+               app was never showing it — and a call is still up. Reopening it is
+               the only way back to its controls; leaving it to a later
+               onCallAdded() meant waiting for a call that may never come. */
+            bringToFront(ctx, number, false);
+            return;
+        }
         a.runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -146,6 +192,11 @@ public class CallActivity extends Activity {
                     if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
                     a.releaseRecorderOffThread();
                     a.showCaller(number);
+                    /* the status line still held the finished call's duration —
+                       the ticker only repaints it on its next pass, up to a
+                       second later, over a screen that now belongs to somebody
+                       else. Paint the live call's own state straight away. */
+                    a.refreshStatus();
                 } catch (Exception ignored) { }
             }
         });
@@ -208,8 +259,19 @@ public class CallActivity extends Activity {
         muted = DialerInCallService.muted;
         if (muteBtn != null) muteBtn.setSelected(muted);
         if (muteLabel != null) muteLabel.setText(muted ? "unmute" : "mute");
+        setDesc(muteBtn, muted ? "unmute" : "mute");
 
         showCaller(getIntent() == null ? "" : getIntent().getStringExtra("number"));
+
+        /* The system can ask for this screen with the DTMF keypad open
+           (onBringToForeground(true)); a screen created by that request used to
+           ignore it and come up with the keypad closed. */
+        try {
+            if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_KEYPAD, false)
+                    && keypadPanel != null) {
+                keypadPanel.setVisibility(View.VISIBLE);
+            }
+        } catch (Exception ignored) { }
 
         muteBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
@@ -324,6 +386,18 @@ public class CallActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        /* An intent that only asks for the screen to be shown again is not a new
+           call. Everything below belongs to a call that has just taken the
+           screen over — it drops the clock, unmutes the line and closes the
+           keypad — so running it for a resume would undo the state of the call
+           that is still on it. */
+        if (intent != null && intent.getBooleanExtra(EXTRA_RESUME, false)) {
+            if (intent.getBooleanExtra(EXTRA_KEYPAD, false) && keypadPanel != null) {
+                keypadPanel.setVisibility(View.VISIBLE);
+            }
+            refreshStatus();
+            return;
+        }
         String number = intent == null ? null : intent.getStringExtra("number");
         /* This used to bail out when the number matched the one already painted,
            but an intent only ever arrives here from onCallAdded(): it always
@@ -348,7 +422,9 @@ public class CallActivity extends Activity {
            the end-of-call code already uses. */
         releaseRecorderOffThread();
         if (holdBtn != null) { holdBtn.setSelected(false); holdLabel.setText("hold"); }
+        setDesc(holdBtn, "hold");
         if (muteBtn != null) { muteBtn.setSelected(false); muteLabel.setText("mute"); }
+        setDesc(muteBtn, "mute");
         if (statusView != null) setTextIfChanged(statusView, "connecting…");
         showCaller(number);
     }
@@ -375,6 +451,9 @@ public class CallActivity extends Activity {
         DialerInCallService.muted = next;
         muteBtn.setSelected(muted);
         muteLabel.setText(muted ? "unmute" : "mute");
+        /* the button's own description is what a screen reader reads, and it
+           still said "mute" over a muted line */
+        setDesc(muteBtn, muted ? "unmute" : "mute");
     }
 
     /**
@@ -418,6 +497,7 @@ public class CallActivity extends Activity {
         }
         speakerBtn.setSelected(next);
         speakerLabel.setText(next ? "speaker on" : "speaker");
+        setDesc(speakerBtn, next ? "speaker on" : "speaker");
     }
 
     private void toggleHold() {
@@ -442,6 +522,7 @@ public class CallActivity extends Activity {
         onHold = held;
         if (holdBtn != null) holdBtn.setSelected(held);
         if (holdLabel != null) holdLabel.setText(held ? "resume" : "hold");
+        setDesc(holdBtn, held ? "resume" : "hold");
     }
 
     /**
@@ -464,6 +545,23 @@ public class CallActivity extends Activity {
         CharSequence cur = v.getText();
         if (cur != null && s.toString().contentEquals(cur)) return;
         v.setText(s);
+    }
+
+    /**
+     * The same rule for a view's description. The four call controls are
+     * ImageViews whose description was written once in the layout — "mute",
+     * "speaker", "hold", "record" — while the label under them changed to
+     * "unmute", "speaker on", "resume" and "stop". A screen reader reads the
+     * description, not the label, so it announced the opposite of what the
+     * button would do for the whole length of every call. setContentDescription()
+     * invalidates the node even when the string is unchanged, so it is compared
+     * first, exactly like setTextIfChanged() above.
+     */
+    private static void setDesc(View v, CharSequence s) {
+        if (v == null || s == null) return;
+        CharSequence cur = v.getContentDescription();
+        if (cur != null && s.toString().contentEquals(cur)) return;
+        v.setContentDescription(s);
     }
 
     private void playTone(char c) {
@@ -545,6 +643,7 @@ public class CallActivity extends Activity {
             recording = true;
             recordBtn.setSelected(true);
             recordLabel.setText("stop");
+            setDesc(recordBtn, "stop recording");
             Toast.makeText(this, "Recording to " + out.getName(), Toast.LENGTH_SHORT).show();
         } catch (Throwable t) {
             if (r != null) { try { r.release(); } catch (Exception ignored) { } }
@@ -555,8 +654,7 @@ public class CallActivity extends Activity {
             recorder = null;
             recordFile = null;
             recording = false;
-            recordBtn.setSelected(false);
-            recordLabel.setText("record");
+            resetRecordButton();
             Toast.makeText(this,
                     "This Android version blocks call recording for third-party apps",
                     Toast.LENGTH_LONG).show();
@@ -615,6 +713,7 @@ public class CallActivity extends Activity {
     private void resetRecordButton() {
         if (recordBtn != null) recordBtn.setSelected(false);
         if (recordLabel != null) recordLabel.setText("record");
+        setDesc(recordBtn, "record");
     }
 
     /* ---------------- state ---------------- */
@@ -670,6 +769,14 @@ public class CallActivity extends Activity {
                    service and two view writes, all on a screen that is already
                    closing */
                 return;
+            case Call.STATE_DISCONNECTING:
+                /* The call is over; only the teardown is left. This fell into
+                   the default arm below and put "connecting…" on screen for as
+                   long as the disconnect took — the one moment the line is
+                   certainly not connecting — over a counter that had just been
+                   running. Leave the line as it is and let the tick above close
+                   the screen. */
+                break;
             default:
                 setTextIfChanged(statusView, "connecting…");
                 break;
@@ -680,6 +787,9 @@ public class CallActivity extends Activity {
                the value is unchanged, and this ran on every tick of the clock */
             if (speakerBtn.isSelected() != sp) speakerBtn.setSelected(sp);
             setTextIfChanged(speakerLabel, sp ? "speaker on" : "speaker");
+            /* the route can change without a tap — telecom moves it when a
+               headset is plugged in — and the description follows it too */
+            setDesc(speakerBtn, sp ? "speaker on" : "speaker");
         } catch (Exception ignored) { }
     }
 

@@ -2413,11 +2413,20 @@ function hydrateNative(logOnly) {
      or deleting every contact — left the previous list on screen, and a row
      from it still dialled a number the app could no longer read. A failed
      parse still leaves the current data alone. */
+  /* An answer that is not a string at all — the bridge method returned null, or
+     it has gone away between the call and its return — was folded into "[]" by
+     the `||` that used to sit here, so a read that produced nothing at all was
+     indistinguishable from a device with no contacts: both lists were replaced
+     with their empty states, and every row that had been on screen stopped
+     being dialable. A missing answer is a failed read, exactly like the "null"
+     string the bridge sends for a provider that threw; only an answer that
+     parses to a real array replaces what is on screen. */
+  const read = raw => (raw == null ? null : JSON.parse(raw));
   let list = null, log = null;
   if (!logOnly) {
-    try { list = JSON.parse(PhoneNative.contacts() || "[]"); } catch (e) {}
+    try { list = read(PhoneNative.contacts()); } catch (e) {}
   }
-  try { log = JSON.parse(PhoneNative.callLog() || "[]"); } catch (e) {}
+  try { log = read(PhoneNative.callLog()); } catch (e) {}
   const freshPeople = Array.isArray(list), freshLog = Array.isArray(log);
   /* "null" from either read means the provider threw, not that the device has
      nothing. Both lists then keep what they had — and there is nothing on screen
