@@ -516,11 +516,19 @@ public class MainActivity extends Activity {
      * to recover from. Only the levels that mean the page is no longer on
      * screen are answered, so nothing visible is ever dropped and re-decoded.
      */
+    /* ...and TRIM_MEMORY_UI_HIDDEN is the most frequent of exactly those
+       levels: it is the one the system sends every time the app goes to the
+       background, which is the moment nothing of this page is on screen any
+       more. It was the one level of the four that was left out, so the caches
+       were only dropped once the process had already been pushed to the
+       background LRU — by which point the system is a step away from killing
+       the renderer that onRenderProcessGone exists to recover from. Answer it
+       with the rest. */
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level != TRIM_MEMORY_BACKGROUND && level != TRIM_MEMORY_MODERATE
-                && level != TRIM_MEMORY_COMPLETE) {
+        if (level != TRIM_MEMORY_UI_HIDDEN && level != TRIM_MEMORY_BACKGROUND
+                && level != TRIM_MEMORY_MODERATE && level != TRIM_MEMORY_COMPLETE) {
             return;
         }
         if (web == null) return;

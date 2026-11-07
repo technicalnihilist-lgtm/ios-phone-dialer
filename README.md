@@ -106,7 +106,7 @@ android/                 native app source
 ## Notes
 
 - The APK is signed with a locally generated key (`CN=Phone Dialer`), fine for sideloading but not a Play Store key.
-- The bundled `apk/Phone-Dialer.apk` is the 2.3 build (versionCode 6): the source is at 2.6.19 (versionCode 46) but the signing
+- The bundled `apk/Phone-Dialer.apk` is the 2.3 build (versionCode 6): the source is at 2.6.20 (versionCode 47) but the signing
   key was not available for this release, and an APK signed with a fresh key would not install over the existing one.
 - Typography is only pixel-identical on Apple hardware, where SF Pro resolves. Elsewhere it falls back to Helvetica Neue / the system sans.
 - There is no sample data anywhere: contacts, call history and voicemail come from the device, so the browser build shows empty lists until the Android app fills them in.
@@ -118,7 +118,7 @@ android/                 native app source
 | App name | Phone |
 | Package name / App ID | `com.phone.dialer` |
 | Category | Utility |
-| Version | 2.6.19 (versionCode 46) |
+| Version | 2.6.20 (versionCode 47) |
 | Minimum Android | 7.0 (API 24) |
 | Price | Free |
 | Icon | https://raw.githubusercontent.com/technicalnihilist-lgtm/ios-phone-dialer/main/icons/icon-512.png |

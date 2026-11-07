@@ -567,7 +567,7 @@ button{font-family:inherit;color:inherit}
   <main class="app" id="app" data-view="keypad">
 
     <!-- KEYPAD -->
-    <section class="view" id="v-keypad" aria-label="Keypad">
+    <section class="view" id="v-keypad" role="tabpanel" aria-labelledby="tab-keypad" aria-label="Keypad">
       <div class="dialtop" id="dialtop">
         <div class="number" id="num" aria-live="polite"></div>
         <button class="match" id="match"><span class="av" id="matchAv"></span><span class="mn" id="matchName"></span></button>
@@ -588,20 +588,20 @@ button{font-family:inherit;color:inherit}
     </section>
 
     <!-- FAVORITES -->
-    <section class="view" id="v-favorites" aria-label="Favorites">
+    <section class="view" id="v-favorites" role="tabpanel" aria-labelledby="tab-favorites" aria-label="Favorites">
       <div class="hdr"><h1>Favorites</h1><button>Edit</button></div>
       <div class="favs" id="favs"></div>
     </section>
 
     <!-- RECENTS -->
-    <section class="view" id="v-recents" aria-label="Recents">
+    <section class="view" id="v-recents" role="tabpanel" aria-labelledby="tab-recents" aria-label="Recents">
       <div class="hdr"><h1>Recents</h1><button>Edit</button></div>
       <div class="seg" id="seg"><span class="segpill" id="segpill"></span><button class="on">All</button><button>Missed</button></div>
       <div class="list plain" id="recents"></div>
     </section>
 
     <!-- CONTACTS -->
-    <section class="view" id="v-contacts" aria-label="Contacts">
+    <section class="view" id="v-contacts" role="tabpanel" aria-labelledby="tab-contacts" aria-label="Contacts">
       <div class="hdr"><h1>Contacts</h1><button>+</button></div>
       <div class="searchwrap">
         <label class="search">
@@ -613,7 +613,7 @@ button{font-family:inherit;color:inherit}
     </section>
 
     <!-- VOICEMAIL -->
-    <section class="view" id="v-voicemail" aria-label="Voicemail">
+    <section class="view" id="v-voicemail" role="tabpanel" aria-labelledby="tab-voicemail" aria-label="Voicemail">
       <div class="hdr"><h1>Voicemail</h1><button>Greeting</button></div>
       <div class="list plain" id="voicemail"></div>
     </section>
@@ -621,12 +621,12 @@ button{font-family:inherit;color:inherit}
   </main>
 
   <nav class="tabbar" id="tabbar" role="tablist" aria-label="Phone">
-    <span class="pill" id="pill"></span>
-    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><path d="m12 3.4 2.6 5.3 5.9.9-4.3 4.2 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.6l5.9-.9z"/></svg><span>Favorites</span></button>
-    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.2 2"/></svg><span>Recents</span></button>
-    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.2a7.6 7.6 0 0 1 14.8 0"/></svg><span>Contacts</span></button>
-    <button class="tab on" role="tab"><svg viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="6.4" cy="6.4" r="1.5"/><circle cx="12" cy="6.4" r="1.5"/><circle cx="17.6" cy="6.4" r="1.5"/><circle cx="6.4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="17.6" cy="12" r="1.5"/><circle cx="6.4" cy="17.6" r="1.5"/><circle cx="12" cy="17.6" r="1.5"/><circle cx="17.6" cy="17.6" r="1.5"/></g></svg><span>Keypad</span></button>
-    <button class="tab" role="tab"><svg viewBox="0 0 24 24"><circle cx="5.8" cy="12" r="3.4"/><circle cx="18.2" cy="12" r="3.4"/><path d="M9.2 12h5.6"/></svg><span>Voicemail</span></button>
+    <span class="pill" id="pill" aria-hidden="true"></span>
+    <button class="tab" role="tab" id="tab-favorites" aria-controls="v-favorites"><svg viewBox="0 0 24 24"><path d="m12 3.4 2.6 5.3 5.9.9-4.3 4.2 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.6l5.9-.9z"/></svg><span>Favorites</span></button>
+    <button class="tab" role="tab" id="tab-recents" aria-controls="v-recents"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.2 2"/></svg><span>Recents</span></button>
+    <button class="tab" role="tab" id="tab-contacts" aria-controls="v-contacts"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.2a7.6 7.6 0 0 1 14.8 0"/></svg><span>Contacts</span></button>
+    <button class="tab on" role="tab" id="tab-keypad" aria-controls="v-keypad"><svg viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="6.4" cy="6.4" r="1.5"/><circle cx="12" cy="6.4" r="1.5"/><circle cx="17.6" cy="6.4" r="1.5"/><circle cx="6.4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="17.6" cy="12" r="1.5"/><circle cx="6.4" cy="17.6" r="1.5"/><circle cx="12" cy="17.6" r="1.5"/><circle cx="17.6" cy="17.6" r="1.5"/></g></svg><span>Keypad</span></button>
+    <button class="tab" role="tab" id="tab-voicemail" aria-controls="v-voicemail"><svg viewBox="0 0 24 24"><circle cx="5.8" cy="12" r="3.4"/><circle cx="18.2" cy="12" r="3.4"/><path d="M9.2 12h5.6"/></svg><span>Voicemail</span></button>
   </nav>
 
   <div class="callscreen" id="callscreen" aria-hidden="true">
@@ -1796,7 +1796,22 @@ let contactIdx = [];
    a few thousand contacts is tens of thousands of them, all on the main thread
    while the page is coming up. One collator answers all of them, same order,
    and sorts the same list about twice as fast. */
-const nameCollator = (typeof Intl !== "undefined" && Intl.Collator) ? new Intl.Collator() : null;
+/* ...but Intl is one more optional platform API, and this line sits at the top
+   level of the script: a WebView whose ICU data is missing, half-installed or
+   stripped answers Intl.Collator with a constructor that throws, and the throw
+   took everything below it with it — the Recents and Contacts wiring, the
+   All/Missed control, the clock, the boot block and the contact hydration never
+   ran, so the page came up as a keypad with no lists, no clock and no contacts
+   for the life of the page. Every other optional API here (matchMedia, vibrate,
+   clipboard, normalize, fonts.ready, the bridge itself) is asked for through a
+   guard; ask for this one the same way and fall back to the localeCompare path
+   cmpName() already carries. */
+let nameCollator = null;
+try {
+  nameCollator = (typeof Intl !== "undefined" && Intl.Collator) ? new Intl.Collator() : null;
+} catch (e) {
+  nameCollator = null;
+}
 const cmpName = (a, b) => nameCollator ? nameCollator.compare(a, b) : a.localeCompare(b);
 /*
  * What the list shows is a sequence of index entries, and a row's markup cannot
