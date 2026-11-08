@@ -1589,6 +1589,14 @@ function glide(i) {
 function showView(i) {
   mark(i);
   if (i === cur) return;
+  /* The Contacts search box keeps its focus when its view is hidden, and a
+     focused field takes every key. A digit typed after leaving Contacts went
+     into a box nobody can see: the contacts list underneath was filtered by a
+     query the user never meant to type, and the keypad — the page actually on
+     screen — received nothing. The soft keyboard stayed up over the keypad for
+     the same reason. Release the focus on the way out; the text in the box is
+     kept, so coming back shows the list still filtered. */
+  if (NAMES[cur] === "contacts") $("q").blur();
   const d = i > cur ? "goR" : "goL";
   const old = $("v-" + NAMES[cur]);
   document.querySelectorAll(".view.leaving").forEach(v => v.classList.remove("leaving"));
@@ -1874,6 +1882,9 @@ const cmpName = (a, b) => nameCollator ? nameCollator.compare(a, b) : a.localeCo
  */
 let shownRows = null;
 const pickBuf = [];
+/* The query the list on screen was built for, so a render can tell a new search
+   from the same one being drawn again. */
+let lastQuery = null;
 /* The entry a contact gets in the index, and the key that entry is looked up by:
    the two fields the device can actually change, its name and its number.
    Rebuilding the index for a read that brought the same book back meant
@@ -2043,6 +2054,14 @@ function renderContacts(q) {
      the list while the name sat right in front of the user; a lone space
      dropped every single-word contact. */
   const raw = normSpace(q);
+  /* A new query keeps the scroll position of the old one. Someone who had
+     scrolled to the end of a long book and then typed a query was left looking
+     at the middle of the results — the first matches, the ones the search is
+     for, were scrolled out of view above — and a query that matched a handful
+     of rows out of three thousand looked as though it had matched nothing at
+     all. Each query starts at the top of its own results. */
+  const newQuery = raw !== lastQuery;
+  lastQuery = raw;
   /* the query is folded the same way the stored names are, so typing "josé"
      finds "José" instead of nothing at all */
   const needle = fold(raw).toLowerCase();
@@ -2082,6 +2101,10 @@ function renderContacts(q) {
     out += e.html;
   }
   $("contacts").innerHTML = out || '<div class="empty">No Contacts</div>';
+  /* a render for a query that changed brings a different list, and that list is
+     read from its first row. A render for the same query — the tab being opened
+     again, a hydrate — leaves the reader where they were. */
+  if (newQuery) $("v-contacts").scrollTop = 0;
 }
 buildContactIdx();
 renderContacts("");
@@ -2128,7 +2151,18 @@ matchEl.addEventListener("click", () => {
 });
 
 /* ---------------- placing a real call ---------------- */
-const MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
+/* An iPad on iPadOS 13 or later says "iPad" nowhere in its user agent: it sends
+   the desktop Safari one ("Macintosh; Intel Mac OS X …") so that sites serve
+   their desktop layout, and the only thing left that gives it away is that a Mac
+   with a touch screen does not exist — navigator.maxTouchPoints is above 1 there
+   and 0 on every real Mac. Without that test an iPad was read as a desktop, so
+   tapping Call opened the simulated call screen instead of handing the number to
+   the system dialer: the one device that can place a real call was the one that
+   could not, silently. The install hint further down tests the same string and
+   missed the iPad for the same reason, so it never offered "Add to Home Screen"
+   there either. One test, both callers. */
+const TOUCH_MAC = /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+const MOBILE = TOUCH_MAC || /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
 
 /* Two digits, without String.prototype.padStart. padStart only exists from
    Chrome 57, and this app runs on a WebView the device provides: the one an
@@ -2407,7 +2441,8 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
      means "not standalone", which is what the banner already assumed */
   const displayMode = mq("(display-mode: standalone)");
   const standalone = (displayMode ? displayMode.matches : false) || navigator.standalone === true;
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  /* iPadOS 13+ reports a Macintosh UA — see TOUCH_MAC above */
+  const ios = TOUCH_MAC || /iPhone|iPad|iPod/.test(navigator.userAgent);
   if (standalone || off || location.protocol === "file:") return;
   let prompt = null;
   addEventListener("beforeinstallprompt", e => { e.preventDefault(); prompt = e; btn.hidden = false; });
@@ -2454,12 +2489,22 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
      the isFinite() test as a real value and clamped to the bottom of the
      slider — the background glow went out and the sheet read 0% — instead of
      falling back to the default the way {"v":"abc"} already did. */
-  FIELDS.forEach(([k, , lo, hi]) => {
+  FIELDS.forEach(([k, , lo, hi, step]) => {
     const raw = G[k];
     const numeric = typeof raw === "number" ||
       (typeof raw === "string" && raw.trim() !== "");
     const n = numeric ? Number(raw) : NaN;
-    G[k] = isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : DEF[k];
+    if (!isFinite(n)) { G[k] = DEF[k]; return; }
+    /* ...and a number that is not on the slider's own step grid is not a value
+       the slider can hold. A stored {"sat":201} — step 5 — was clamped and used
+       as 201: --g-sat read 201%, the readout under it read "201%", and the range
+       input snapped its own thumb to 200, so the sheet showed one value while
+       the thumb sat on another and the first drag of the slider jumped to a
+       third. Snap the stored value to the grid the control actually uses, so the
+       property, the readout and the thumb all say the same thing. Every value
+       this app writes is already on the grid, so nothing it stored changes. */
+    const snapped = lo + Math.round((Math.min(hi, Math.max(lo, n)) - lo) / step) * step;
+    G[k] = Math.min(hi, Math.max(lo, snapped));
   });
   const sheet = $("gsheet"), gear = $("gear"), rows = $("gsRows"), ins = {};
 
