@@ -97,5 +97,13 @@ self.addEventListener("fetch", e => {
   e.waitUntil(fresh);
   e.respondWith(
     caches.match(req).then(hit => hit || fresh.then(res => res || Response.error()))
+      /* The navigate path above already answers a cache that refuses to answer
+         with an error response, because a rejection handed to respondWith()
+         replaces the app with the browser's own network-error page. This path
+         did not: caches.match() rejecting here — storage turned off, the quota
+         gone, an entry that will not deserialize — failed the response for
+         every icon, the manifest and every other asset the page asks for. Same
+         rule as offline(), on the one branch that was missing it. */
+      .catch(() => Response.error())
   );
 });

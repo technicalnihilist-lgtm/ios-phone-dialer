@@ -1027,7 +1027,8 @@ let value = "";
 /* call history, restored from storage before anything renders */
 let dialed = [];
 try {
-  const stored = JSON.parse(localStorage.getItem("phone.dialed") || "[]");
+  const saved = localStorage.getItem("phone.dialed");
+  const stored = JSON.parse(saved || "[]");
   if (Array.isArray(stored)) {
     dialed = stored
       .filter(d => d && typeof d === "object" && typeof d.number === "string" && d.number)
@@ -1047,6 +1048,13 @@ try {
     if (stored.length > dialed.length) {
       try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
     }
+  } else if (saved) {
+    /* A value that is not a list at all — an object, a bare string, the literal
+       "null" — could not describe a single call, so nothing in it was kept; but
+       it was left in storage and parsed again at every launch, for ever, the
+       same defect the oversized value above is repaired for. Write the empty
+       list back. */
+    try { localStorage.setItem("phone.dialed", "[]"); } catch (e) {}
   }
 } catch (e) { dialed = []; }
 
@@ -1773,6 +1781,9 @@ renderFavs();
    string still re-parses and re-lays-out up to eighty rows, and Recents is
    re-rendered on every hydrate and every dial */
 let recentsHTML = null;
+/* the filter the list on screen was built for, so a filter change can start at
+   the top of its own rows and a plain re-render cannot move the reader */
+let recentsShownFilter = null;
 /* One row's markup depends only on that row, and the rows themselves are kept
    stable across renders (dialedRow below). It was rebuilt — two escapes, an
    avatar, a time — for each of up to eighty rows on every dial and every return
@@ -1836,9 +1847,18 @@ function renderRecents(filter) {
     html += recRowMarkup(r);
   }
   html = html || `<div class="empty">${missed ? "No Missed Calls" : "No Calls"}</div>`;
-  if (html === recentsHTML) return;   /* nothing to re-parse, nothing to lay out */
+  if (html === recentsHTML) { recentsShownFilter = filter; return; }   /* nothing to re-parse, nothing to lay out */
   recentsHTML = html;
   $("recents").innerHTML = html;
+  /* Switching All to Missed kept the scroll position of the other list: someone
+     who had scrolled to the bottom of forty calls and then tapped Missed landed
+     at the bottom of the two rows that were left, with the newest missed call —
+     the one they were looking for — scrolled out of view above. The contacts
+     search already starts each of its results at the top for the same reason.
+     A re-render of the same filter — a dial, a return to the foreground — is
+     left where the reader was. */
+  if (recentsShownFilter !== filter) $("v-recents").scrollTop = 0;
+  recentsShownFilter = filter;
 }
 renderRecents("all");
 
@@ -2454,12 +2474,21 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
        that already was one. Ask again whenever the page comes back to the
        front, which is exactly when the user has returned from Settings or the
        dialog. */
-    document.addEventListener("visibilitychange", () => {
+    const onShow = () => {
       if (document.hidden) return;
+      /* The card is gone — dismissed, or the role was granted — and nothing in
+         this page can bring it back, so this check has nothing left to decide.
+         It was never removed, so every return to the foreground made a binder
+         call into RoleManager for the rest of the session. Drop it. */
+      if (!card.classList.contains("show")) {
+        document.removeEventListener("visibilitychange", onShow);
+        return;
+      }
       let held = false;
       try { held = !!PhoneNative.isDefaultDialer(); } catch (e) { return; }
       if (held) card.classList.remove("show");
-    });
+    };
+    document.addEventListener("visibilitychange", onShow);
     return;
   }
   /* a missing or throwing matchMedia must not stop the page booting: no answer
@@ -2489,11 +2518,19 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 (function glassSettings() {
   /* same rule: with no answer, fall back to the dark defaults the stylesheet
      itself falls back to, instead of throwing out of this block */
-  const lightMQ = mq("(prefers-color-scheme: light)");
-  const dark = !(lightMQ && lightMQ.matches);
-  const DEF = { v: dark ? 58 : 45, blur: 22, sat: 200, edge: 100, glow: 100 };
+  /* The Default preset is the transparency the *current* appearance calls for,
+     and the two appearances do not share one: 58% in the dark, 45% in the light.
+     It was read once, when the page loaded, so after a system light/dark switch
+     the Default button applied the other scheme's value and the glass came back
+     at the wrong strength. Ask again when the preset is applied; the value the
+     page starts with is still the one its own scheme gives it. */
+  const schemeDefault = () => {
+    const lightMQ = mq("(prefers-color-scheme: light)");
+    const dark = !(lightMQ && lightMQ.matches);
+    return { v: dark ? 58 : 45, blur: 22, sat: 200, edge: 100, glow: 100 };
+  };
+  const DEF = schemeDefault();
   const PRE = {
-    def: DEF,
     clear: { v: 90, blur: 10, sat: 230, edge: 150, glow: 100 },
     frost: { v: 22, blur: 42, sat: 160, edge: 80, glow: 60 }
   };
@@ -2628,7 +2665,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     });
   });
   document.querySelectorAll(".gs-pre button").forEach(b =>
-    b.addEventListener("click", () => { G = Object.assign({}, PRE[b.dataset.p]); apply(true); }));
+    b.addEventListener("click", () => {
+      G = Object.assign({}, b.dataset.p === "def" ? schemeDefault() : (PRE[b.dataset.p] || DEF));
+      apply(true);
+    }));
 
   function open(on) {
     const was = sheet.classList.contains("show");
