@@ -1496,12 +1496,37 @@ function closeMenu() { $("menu").classList.remove("show"); }
 document.addEventListener("pointerdown", e => {
   if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
 }, true);
+/* The clipboard holds text, not a number, and every character that was not a
+   digit, a "+", a "*" or a "#" used to be deleted from the *whole* of it and
+   the rest welded together. So a number copied with its extension —
+   "+1 (415) 555-2671 ext 9", which is how a business number is printed on a
+   card — arrived on the keypad as "+141555526719", the extension digits on the
+   end of the number, and a clip holding two numbers ("555-1234, 987-6543")
+   dialled the first immediately followed by the second. Take the first run of
+   characters that can belong to a number, and only when that run actually holds
+   three digits or more; everything else in the clip is prose. */
+const DIAL_RUN = /[0-9+*#().\-\s]+/g;
+function dialable(txt) {
+  const s = String(txt == null ? "" : txt);
+  DIAL_RUN.lastIndex = 0;
+  let m;
+  while ((m = DIAL_RUN.exec(s)) !== null) {
+    const run = m[0].replace(/[^\d+*#]/g, "");
+    let digits = 0;
+    for (let i = 0; i < run.length; i++) {
+      const c = run.charCodeAt(i);
+      if (c >= 48 && c <= 57) digits++;
+    }
+    if (digits >= 3) return run;
+  }
+  return "";
+}
 $("pasteBtn").addEventListener("click", () => {
   closeMenu();
   /* the clipboard text arrives either from the bridge or from a promise, so the
      part that uses it is written once and handed to both */
   const use = txt => {
-    const clean = (txt || "").replace(/[^\d+*#]/g, "");
+    const clean = dialable(txt);
     if (clean) { value = clean.slice(0, 20); render(); }
   };
   let txt = "";
@@ -2511,6 +2536,18 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   /* a slider drag fires 'input' on every frame; writing localStorage on each
      one meant ~60 synchronous JSON writes a second while dragging */
   let saveT = null, slideQueued = false;
+  /* The fields whose value has changed since the last paint. A frame repainted
+     the one field that happened to open it, so a second slider moved inside the
+     same frame — two fingers on two sliders, or a thumb and a keyboard — was
+     never repainted at all: its custom property kept the old value while G, and
+     therefore what is saved, held the new one, and the sheet went on reading the
+     old number under it. Collect the fields and repaint every one of them. */
+  const dirty = [];
+  function paintDirty() {
+    if (!dirty.length) return;
+    for (let d = 0; d < dirty.length; d++) paint(dirty[d]);
+    dirty.length = 0;
+  }
   function flush() {
     clearTimeout(saveT);
     saveT = null;
@@ -2529,7 +2566,14 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   }
   addEventListener("pagehide", flushIfPending);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) flushIfPending();
+    if (document.hidden) { flushIfPending(); return; }
+    /* A drag whose repaint frame never ran — the page was hidden between the
+       last 'input' and the next frame — left its property stale for the rest of
+       the session: the value was saved, and the slider and the readout agreed on
+       it, but the glass was still painted from the old one. Paint whatever is
+       still owed now that frames run again; on every ordinary return the list is
+       empty and this does nothing. */
+    paintDirty();
   });
 
   /* One field's own paint: the derived custom property it feeds, and its row.
@@ -2561,6 +2605,8 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   }
   function apply(save) {
     for (let f = 0; f < FIELDS.length; f++) paint(FIELDS[f][0]);
+    /* every field has just been painted from G, so nothing is owed a repaint */
+    dirty.length = 0;
     if (save) saveSoon();
   }
   FIELDS.forEach(([k, name, lo, hi, step, u]) => {
@@ -2575,9 +2621,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
        search box already does — and repaint only the field that moved */
     el.addEventListener("input", () => {
       G[k] = +el.value;
+      if (dirty.indexOf(k) < 0) dirty.push(k);
       if (slideQueued) return;
       slideQueued = true;
-      requestAnimationFrame(() => { slideQueued = false; paint(k); saveSoon(); });
+      requestAnimationFrame(() => { slideQueued = false; paintDirty(); saveSoon(); });
     });
   });
   document.querySelectorAll(".gs-pre button").forEach(b =>
