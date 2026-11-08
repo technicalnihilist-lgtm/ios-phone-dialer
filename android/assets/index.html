@@ -385,7 +385,23 @@ button{font-family:inherit;color:inherit}
    together with the two keyframes nothing else referenced. */
 
 @media (prefers-reduced-motion:reduce){
-  *{animation-duration:.001s!important;transition-duration:.001s!important}
+  /* A universal selector matches elements and never a pseudo-element, and the
+     one animation in this app that runs without end lives on one: the ambient
+     layer behind the glass, `.app::before`, drifts on a 14 s loop for the whole
+     life of the page. It was therefore the single piece of motion the setting
+     did not reach — the keypad, the tab bar, the sheets and the call screen all
+     snapped, while the blurred colour behind them went on sliding about, which
+     is exactly the motion this preference exists to stop. Name the two
+     pseudo-elements so the rule covers what it was written to cover. */
+  *,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}
+  /* ...and the drift must be stopped rather than shortened: it is `infinite
+     alternate`, so a 1 ms duration would not end it but loop it a thousand
+     times a second, leaving the layer at an arbitrary point of the cycle on
+     every frame — a blurred full-width gradient jittering, and repainting, for
+     the users who asked for the least motion. One iteration is not enough
+     either (the fill would be dropped and the layer would snap back); drop the
+     animation, and the layer holds its un-animated position and its gradient. */
+  .app::before{animation:none!important}
 }
 
 /* ===== spring physics + liquid glass layer ===== */
@@ -699,17 +715,33 @@ const ESC_MAP = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
    with a global regex resets lastIndex itself, so sharing it is safe. */
 const ESC_RE = /[&<>"']/g;
 const esc = v => String(v == null ? "" : v).replace(ESC_RE, c => ESC_MAP[c]);
-/* the characters that take up no room at all: a soft hyphen, a zero-width space,
+/* The characters that take up no room at all: a soft hyphen, a zero-width space,
    joiner or non-joiner, the direction marks, a word joiner and a byte order
    mark. A name copied out of a web page, a PDF or a chat carries them, and the
    avatar of a name that begins with one drew nothing at all, because the first
    "character" of the name was a character with no shape. */
+/* ...but the direction marks are only two of the seven characters that set the
+   direction of the text around them, and the five that were missing are the ones
+   an RTL name is most often wrapped in: the Arabic letter mark (U+061C) and the
+   four isolates — first-strong, left-to-right, right-to-left and pop (U+2066 to
+   U+2069). A vCard, or a contact synced from an app that stores an Arabic or
+   Hebrew name with its direction pinned, arrives as U+2067 + the name + U+2069,
+   and none of the three was stripped. The name then began with a character with
+   no shape, so the avatar drew the isolate and nothing else: a four-letter
+   Arabic name in that form drew a blank circle, and the same name with a second
+   word after it drew the initial of the second word instead of the first. The
+   section header above the row was an empty strip with a row under it, which is
+   the same defect the two direction marks already in this table were put here
+   to fix.
+   U+180E, the Mongolian vowel separator, is the other one: Unicode reclassified
+   it from a space to a format character and it has had no width since, so it is
+   invisible wherever it appears. */
 /* ZWNJ and ZWJ are deliberately not in this list: they carry no shape of their
    own but they do change the one drawn around them — a family emoji, an Indic
    conjunct — so a key built from the name may drop them and the section header
    drawn from it may not. fold() removes those two; this table is only the
    characters that mean nothing at all. */
-const INVISIBLE = /[\u00ad\u200b\u200e\u200f\u2060\ufeff]/g;
+const INVISIBLE = /[\u00ad\u061c\u180e\u200b\u200e\u200f\u2060\u2066\u2067\u2068\u2069\ufeff]/g;
 const JOINERS = /[\u200c\u200d]/g;
 const AV_FALLBACK = ["#8e8e93", "#636366"];
 /* w[0] is a UTF-16 code unit, not a character. A name that starts with an emoji
