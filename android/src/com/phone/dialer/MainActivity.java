@@ -554,8 +554,25 @@ public class MainActivity extends Activity {
      */
     private boolean handoff(String url) {
         if (url == null) return true;
-        if (url.startsWith("tel:") || url.startsWith("sms:") || url.startsWith("smsto:")
-                || url.startsWith("mailto:")) {
+        /* A tel: link is a dial request, and ACTION_VIEW is not one: this app
+           declares only ACTION_DIAL for the tel scheme (that is what makes it
+           eligible for the dialer role), so a page that fell back to a tel:
+           navigation — placeCall()'s last resort when the bridge has gone away
+           — asked for a handler the app itself does not publish. With no other
+           dialer installed the intent resolved to nothing, startActivity threw
+           ActivityNotFoundException into the catch below, and the tap did
+           nothing at all; with one installed it opened that app instead of
+           this one. Ask for the action the platform actually defines for a
+           number, which every dialer answers, this one included. */
+        if (url.startsWith("tel:")) {
+            try {
+                Intent i = new Intent(Intent.ACTION_DIAL, Uri.parse(url));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
+            } catch (Exception ignored) { }
+            return true;
+        }
+        if (url.startsWith("sms:") || url.startsWith("smsto:") || url.startsWith("mailto:")) {
             try {
                 Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

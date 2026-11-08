@@ -47,11 +47,39 @@ public class DialerActivity extends Activity {
         if (intent == null) return null;
         Uri data = intent.getData();
         if (data == null) return null;
-        String number;
+        /* A tel: URI is opaque, and a "#" in it is part of the number, not a
+           fragment: *123# runs a code, #31# hides the caller's ID, *#06# shows
+           the IMEI. Uri does not know that — it splits the fragment at the
+           first "#" for every URI, opaque or not — so the scheme-specific part
+           of "tel:*123#" is "*123", and the code arrived on the keypad with
+           its last character missing and dialled something else entirely.
+           Read the URI as it was written instead (getDataString() keeps the
+           whole string) and take everything after the scheme: the escapes are
+           decoded below, the "#" survives, and the "//" of a "tel://" form is
+           stripped by the page along with every other character that cannot
+           belong to a number. */
+        String number = null;
         try {
-            number = data.getSchemeSpecificPart();
+            number = intent.getDataString();
         } catch (Exception e) {
-            return null;
+            number = null;
+        }
+        String scheme = null;
+        try {
+            scheme = data.getScheme();
+        } catch (Exception ignored) { }
+        if (number != null && scheme != null && number.length() > scheme.length() + 1
+                && number.charAt(scheme.length()) == ':'
+                && number.regionMatches(true, 0, scheme, 0, scheme.length())) {
+            number = number.substring(scheme.length() + 1);
+        } else {
+            /* no readable URI string: fall back to what Uri itself parsed, which
+               is the same answer for every URI that carries no "#" */
+            try {
+                number = data.getSchemeSpecificPart();
+            } catch (Exception e) {
+                return null;
+            }
         }
         if (number == null) return null;
         /* A tel: URI built by another app is almost always percent-encoded —
@@ -70,7 +98,7 @@ public class DialerActivity extends Activity {
         } catch (Exception ignored) {
             /* malformed escape: keep the part exactly as it arrived */
         }
-        /* "tel:12345;ext=6" and "tel:12345#;postd=1" style suffixes are not part
+        /* "tel:12345;ext=6" and "tel:12345;postd=1" style parameters are not part
            of the number as far as the keypad is concerned */
         int semi = number.indexOf(';');
         if (semi >= 0) number = number.substring(0, semi);

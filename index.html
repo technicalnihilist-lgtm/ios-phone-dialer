@@ -911,6 +911,19 @@ const hangulOf = cp => ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0xa960 && cp <=
   : ((cp >= 0x1160 && cp <= 0x11a7) || (cp >= 0xd7b0 && cp <= 0xd7c6)) ? 2
   : ((cp >= 0x11a8 && cp <= 0x11ff) || (cp >= 0xd7cb && cp <= 0xd7fb)) ? 3
   : 0;
+/* Punctuation is not the first letter of anything, and a contact saved without
+   a name is drawn under its number — which the device often stores with its
+   brackets: "(555) 123-4567". firstCodePoint() took the "(" as the initial, so
+   that row's avatar read "(5" and the section header above it was a lone
+   opening bracket. Every other contact on the list is filed under a letter, a
+   digit or "#"; a bracket is neither. The ranges are the ASCII punctuation
+   block plus the general-punctuation ones a name is actually quoted or
+   bracketed with — deliberately not the symbols an emoji or a currency sign
+   lives in, because those are the glyphs an avatar is supposed to draw. */
+const PUNCT_RE = /[\u00a1\u00ab\u00bb\u00bf\u2010-\u2027\u2030-\u205e]/;
+const isPunct = cp => cp < 0x80
+  ? (cp > 0x20 && !((cp >= 0x30 && cp <= 0x39) || (cp >= 0x41 && cp <= 0x5a) || (cp >= 0x61 && cp <= 0x7a)))
+  : (cp <= 0xffff && PUNCT_RE.test(String.fromCharCode(cp)));
 const firstCodePoint = s => {
   if (!s) return "";
   /* A name can begin with a character that has nothing to hang off: a
@@ -927,7 +940,8 @@ const firstCodePoint = s => {
     const cp = s.codePointAt(start);
     if (cp === undefined) return "";
     /* L (leading) jamo is a valid start; V and T are not */
-    if (cp === 0x200c || cp === 0x200d || isExtend(cp) || hangulOf(cp) > 1) {
+    if (cp === 0x200c || cp === 0x200d || cp === 0x20 || isPunct(cp)
+        || isExtend(cp) || hangulOf(cp) > 1) {
       start += cp > 0xffff ? 2 : 1;
       continue;
     }
@@ -1641,7 +1655,10 @@ function showView(i) {
   cur = i;
   clearTimeout(showView.t);
   showView.t = setTimeout(() => { app.classList.remove(d); old.classList.remove("leaving"); }, 1200);
-  if (NAMES[i] === "recents") syncSeg();
+  /* the Recents list is drawn here rather than on every dial — see
+     renderRecents() — so this is the moment its markup is built, and the All/
+     Missed capsule is placed after it so the two agree on the same rows */
+  if (NAMES[i] === "recents") { syncSeg(); renderRecents(recentsFilter()); }
   /* the Contacts list is built the first time the tab is actually shown: see
      hydrateNative(). renderContacts() compares the rows it would draw against the
      rows already on screen, so calling it here costs a walk over the index rather
@@ -1848,6 +1865,15 @@ function renderRecents(filter) {
   }
   html = html || `<div class="empty">${missed ? "No Missed Calls" : "No Calls"}</div>`;
   if (html === recentsHTML) { recentsShownFilter = filter; return; }   /* nothing to re-parse, nothing to lay out */
+  /* The list is only ever written when it is the view in front of the user.
+     Every dial re-rendered Recents — the tap that places a call, on the thread
+     that has to draw the keypad's reaction to it — and the write is an HTML
+     parse of up to eighty buttons into a subtree the user cannot see, measured
+     at 17 ms with a full log and a full local history. Nothing else reads the
+     rows: showView() draws them on the way into the tab, which is the only
+     moment they become visible. Leave the DOM alone and let that render answer
+     the question, exactly as the Contacts list is built when its tab is opened. */
+  if (app.dataset.view !== "recents") return;
   recentsHTML = html;
   $("recents").innerHTML = html;
   /* Switching All to Missed kept the scroll position of the other list: someone
