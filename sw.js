@@ -59,7 +59,14 @@ self.addEventListener("fetch", e => {
     .then(hit => hit || caches.match("./index.html"))
     /* with nothing cached this resolved to undefined, which respondWith()
        rejects with a TypeError instead of showing an offline page */
-    .then(hit => hit || Response.error());
+    .then(hit => hit || Response.error())
+    /* ...and the cache itself can refuse to answer: storage turned off, the
+       quota gone, an entry that will not deserialize. That rejection used to
+       travel straight into respondWith()/waitUntil(), which turns it into the
+       browser's own network error page in place of the app — the one outcome
+       the fallback chain above exists to prevent. Answer with an error
+       response instead. */
+    .catch(() => Response.error());
 
   if (req.mode === "navigate") {
     /* network first, so a new build actually reaches an installed app instead of

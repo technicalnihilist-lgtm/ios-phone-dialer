@@ -104,6 +104,7 @@
                     android:src="@drawable/ic_mute" />
                 <TextView
                     android:id="@+id/lbl_mute"
+                    android:importantForAccessibility="no"
                     style="@style/CallLabel"
                     android:text="mute" />
             </LinearLayout>
@@ -114,7 +115,9 @@
                     style="@style/CallIcon"
                     android:contentDescription="keypad"
                     android:src="@drawable/ic_keypad" />
-                <TextView style="@style/CallLabel" android:text="keypad" />
+                <TextView android:importantForAccessibility="no"
+                    style="@style/CallLabel"
+                    android:text="keypad" />
             </LinearLayout>
 
             <LinearLayout style="@style/CallCell">
@@ -125,6 +128,7 @@
                     android:src="@drawable/ic_speaker" />
                 <TextView
                     android:id="@+id/lbl_speaker"
+                    android:importantForAccessibility="no"
                     style="@style/CallLabel"
                     android:text="speaker" />
             </LinearLayout>
@@ -144,6 +148,7 @@
                     android:src="@drawable/ic_hold" />
                 <TextView
                     android:id="@+id/lbl_hold"
+                    android:importantForAccessibility="no"
                     style="@style/CallLabel"
                     android:text="hold" />
             </LinearLayout>
@@ -154,7 +159,9 @@
                     style="@style/CallIcon"
                     android:contentDescription="add call"
                     android:src="@drawable/ic_addcall" />
-                <TextView style="@style/CallLabel" android:text="add call" />
+                <TextView android:importantForAccessibility="no"
+                    style="@style/CallLabel"
+                    android:text="add call" />
             </LinearLayout>
 
             <LinearLayout style="@style/CallCell">
@@ -165,6 +172,7 @@
                     android:src="@drawable/ic_record" />
                 <TextView
                     android:id="@+id/lbl_record"
+                    android:importantForAccessibility="no"
                     style="@style/CallLabel"
                     android:text="record" />
             </LinearLayout>

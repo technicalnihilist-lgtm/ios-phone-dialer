@@ -2203,7 +2203,12 @@ let callTimer = null, callStartedAt = 0;
 /* elapsed time comes from the clock, so it is still right after the timer was paused */
 function paintCallTime() {
   const secs = Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000));
-  csStatus.textContent = pad2(Math.floor(secs / 60)) + ":" + pad2(secs % 60);
+  /* startCallTimer() paints immediately, and again on every return to the
+     foreground: within the same second the string is the one already on
+     screen, and assigning textContent replaces the text node and invalidates
+     the line for nothing. render() guards the number line the same way. */
+  const t = pad2(Math.floor(secs / 60)) + ":" + pad2(secs % 60);
+  if (csStatus.textContent !== t) csStatus.textContent = t;
 }
 function startCallTimer() {
   clearInterval(callTimer);
@@ -2303,7 +2308,10 @@ function tick() {
   const d = new Date();
   let h = d.getHours(), m = pad2(d.getMinutes());
   h = h % 12 || 12;
-  clockEl.textContent = h + ":" + m;
+  /* the clock is repainted on every return to the foreground as well as once
+     a minute, and most of those land inside the minute already on screen */
+  const t = h + ":" + m;
+  if (clockEl.textContent !== t) clockEl.textContent = t;
 }
 /* wake once a minute, right after the minute turns over, instead of every 15s forever */
 let clockT = null;
@@ -2441,9 +2449,16 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   /* the stored values were written straight into custom properties, so a
      half-written or hand-edited entry like {"v":"abc"} set --g-a:NaN and took
      the backdrop blur out entirely. Coerce to a number and clamp to the slider. */
+  /* ...and only a number (or a string that holds one) is a number: Number([])
+     is 0 and Number(true) is 1, so a stored {"glow":[]} or {"v":true} passed
+     the isFinite() test as a real value and clamped to the bottom of the
+     slider — the background glow went out and the sheet read 0% — instead of
+     falling back to the default the way {"v":"abc"} already did. */
   FIELDS.forEach(([k, , lo, hi]) => {
     const raw = G[k];
-    const n = (raw === null || raw === undefined || raw === "") ? NaN : Number(raw);
+    const numeric = typeof raw === "number" ||
+      (typeof raw === "string" && raw.trim() !== "");
+    const n = numeric ? Number(raw) : NaN;
     G[k] = isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : DEF[k];
   });
   const sheet = $("gsheet"), gear = $("gear"), rows = $("gsRows"), ins = {};
@@ -2605,10 +2620,19 @@ function hydrateNative(logOnly) {
        row with an empty name, an empty subtitle and data-tel="", filed under a
        "#" heading — a row that does nothing at all when it is tapped. Keep the
        same rule the bridge keeps. */
+    /* ...and only a contact that can be told apart can be drawn. A name that
+       came back blank or missing drew a row with no title at all — a "#"
+       avatar, an empty line above the number, filed under "#" — and its search
+       key was empty, so no query could ever find it: the row existed, dialled,
+       and could not be identified or searched for. The bridge already answers a
+       blank name with the number (Bridge.contacts() does exactly this); apply
+       the same rule to whatever the page is handed, before the index is built
+       from it. */
     list.forEach(p => {
       if (!p || typeof p !== "object") return;
       const tel = p.t == null ? "" : String(p.t);
       if (!tel.trim()) return;
+      if (p.n == null || !String(p.n).trim()) p.n = tel.trim();
       people.push(p);
     });
   }
