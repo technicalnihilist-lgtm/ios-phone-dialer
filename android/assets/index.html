@@ -2631,8 +2631,18 @@ function hydrateNative(logOnly) {
     list.forEach(p => {
       if (!p || typeof p !== "object") return;
       const tel = p.t == null ? "" : String(p.t);
-      if (!tel.trim()) return;
-      if (p.n == null || !String(p.n).trim()) p.n = tel.trim();
+      /* trim() is not the test the rest of this page uses for "blank". A name
+         that holds nothing but characters with no shape — a zero-width space, a
+         right-to-left mark, a byte order mark, a soft hyphen, one of the
+         isolates a vCard pins a name with — survives trim() untouched, because
+         none of them is whitespace. So the fallback above never fired for them:
+         the row was drawn with an invisible title over a real number, filed
+         under "#", and its search key was empty, so no query could ever find
+         it — the same defect the whitespace-only case was fixed for, on the
+         characters the address book actually gets its names from. normSpace()
+         is the helper that already strips exactly this set; ask it. */
+      if (!normSpace(tel)) return;
+      if (p.n == null || !normSpace(p.n)) p.n = tel.trim();
       people.push(p);
     });
   }

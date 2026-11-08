@@ -189,7 +189,19 @@ public class CallActivity extends Activity {
                     a.muted = false;
                     if (a.keypadPanel != null) a.keypadPanel.setVisibility(View.GONE);
                     if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
+                    /* ...and the description, which is what a screen reader
+                       reads instead of the label. onNewIntent() resets both
+                       together (see its own setDesc calls below); this path
+                       reset only the text, so after a call waiting ended and
+                       the screen fell back to the call still up, TalkBack went
+                       on offering "unmute" and "resume" over a line that was
+                       neither muted nor held — the exact mismatch the labels
+                       were reset to avoid, still announced. setDesc() compares
+                       before writing, so this costs nothing when the value is
+                       already right. */
+                    setDesc(a.holdBtn, "hold");
                     if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
+                    setDesc(a.muteBtn, "mute");
                     a.releaseRecorderOffThread();
                     /* The caller this screen is now showing also has to be the
                        caller a *re-created* screen shows. onNewIntent()'s
