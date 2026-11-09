@@ -1905,6 +1905,13 @@ function dialedRow(d) {
   return r;
 }
 function renderRecents(filter) {
+  /* The list is only ever written when it is the view in front of the user —
+     and it is only worth *building* then either. The guard below sat after the
+     markup had already been assembled, so every dial (on the thread that has to
+     draw the keypad's reaction to it) and every return to the foreground built
+     up to eighty rows of markup and compared the finished string against the
+     one on screen, for a list nobody could see. Answer the question first. */
+  if (app.dataset.view !== "recents") return;
   const missed = filter === "missed";
   let html = "";
   for (let i = 0; i < dialed.length; i++) {
@@ -1939,7 +1946,6 @@ function renderRecents(filter) {
      rows: showView() draws them on the way into the tab, which is the only
      moment they become visible. Leave the DOM alone and let that render answer
      the question, exactly as the Contacts list is built when its tab is opened. */
-  if (app.dataset.view !== "recents") return;
   recentsHTML = html;
   $("recents").innerHTML = html;
   /* Switching All to Missed kept the scroll position of the other list: someone
@@ -2121,7 +2127,20 @@ function buildContactIdx() {
          the basic plane — an emoji, a rare script — was cut in half and the
          section header drew a replacement box, the same defect initials() was
          fixed for. Take the whole first code point. */
-      sec: (firstCodePoint(name) || "#").toUpperCase(),
+      /* ...but it has to be the first code point of the name the list is
+         *sorted* by, which is the folded one, not the stored one. A collator
+         files "Øyvind" among the O's and "ßtraße" among the S's — fold() is
+         what makes those two agree — while the header was taken from the raw
+         name, so it read "Ø" and "SS" in the middle of the O block and the S
+         block: the section headers came out of alphabetical order and a letter
+         appeared twice (O, Ø, O ... SS, S), with the row filed under a heading
+         that is not where anybody would look for it. An accented capital had
+         the same fault one letter down — "Émile" sorts with the E's and its
+         header said "É". Fold first: the header is then exactly the letter the
+         row is sorted under, and a name fold() does not change — every Indic,
+         Arabic, Hebrew, Greek or CJK name, and every ASCII one — keeps the
+         header it always had. */
+      sec: (firstCodePoint(fold(name)) || "#").toUpperCase(),
       /* the subtitle is the number run through fmt(), which is a regex pass and
          two slices; it cannot change, and it was rebuilt for every visible row
          on every keystroke */
@@ -2383,6 +2402,14 @@ function placeCall(number, name) {
 
 /* ---------------- call screen ---------------- */
 const device = $("device"), cs = $("callscreen"), csName = $("csName"), csStatus = $("csStatus");
+/* The sheet is closed to begin with, and closed means only visibility:hidden —
+   which the browser applies when the .8 s exit transition ends, not when the
+   class comes off. aria-hidden says nothing to the tab order either, so for
+   that .8 s the six in-call controls were focusable and reachable by Tab and by
+   a screen reader's swipe over a screen that was already sliding away, the same
+   defect the Liquid Glass sheet was made inert for. Mark it inert from the
+   first frame and flip it back for the length of a call. */
+try { cs.inert = true; } catch (e) { }
 let callTimer = null, callStartedAt = 0;
 
 /* elapsed time comes from the clock, so it is still right after the timer was paused */
@@ -2438,6 +2465,7 @@ function startCall(number, person) {
   cs.classList.add("show");
   device.classList.add("calling");
   cs.setAttribute("aria-hidden","false");
+  try { cs.inert = false; } catch (e) { }
   behindCall(true);
   clearInterval(callTimer); clearTimeout(startCall.t);
   callStartedAt = 0;
@@ -2466,6 +2494,7 @@ function endCall() {
   cs.classList.remove("show");
   device.classList.remove("calling");
   cs.setAttribute("aria-hidden","true");
+  try { cs.inert = true; } catch (e) { }
   behindCall(false);
 }
 $("csEnd").addEventListener("click", endCall);
@@ -2648,7 +2677,21 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     ["glow", "Background glow", 0, 100, 5, "%"]
   ];
   let G = Object.assign({}, DEF);
-  try { Object.assign(G, JSON.parse(localStorage.getItem("phone.glass") || "{}")); } catch (e) {}
+  /* the value as it was read, kept so the sanitised one can be written back
+     when they differ — see the repair below */
+  let storedGlass = null;
+  try { storedGlass = localStorage.getItem("phone.glass"); } catch (e) {}
+  if (storedGlass !== null) {
+    try {
+      const parsed = JSON.parse(storedGlass);
+      /* only an object can describe the five fields. A bare string, a number or
+         "null" was handed to Object.assign() all the same, which copied the
+         string's characters onto G as G[0], G[1], G[2] — fields nothing reads,
+         so the sheet silently fell back to the defaults while the unusable
+         value stayed in storage. */
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) Object.assign(G, parsed);
+    } catch (e) { }
+  }
   /* the stored values were written straight into custom properties, so a
      half-written or hand-edited entry like {"v":"abc"} set --g-a:NaN and took
      the backdrop blur out entirely. Coerce to a number and clamp to the slider. */
@@ -2674,6 +2717,18 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     const snapped = lo + Math.round((Math.min(hi, Math.max(lo, n)) - lo) / step) * step;
     G[k] = Math.min(hi, Math.max(lo, snapped));
   });
+  /* Every repair above — a value that is not a number, one off the slider's
+     step grid, a value that is not even JSON — was made to the copy in memory
+     and the original was left in storage, so the same unusable entry was
+     parsed and repaired again at every launch, for ever. phone.dialed is
+     repaired this way for the same reason. Write the sanitised value back once,
+     and only when it differs from what was read: a value this app wrote itself
+     serialises to exactly the bytes already stored, so an ordinary launch
+     writes nothing at all. */
+  try {
+    const want = JSON.stringify(G);
+    if (storedGlass !== null && storedGlass !== want) localStorage.setItem("phone.glass", want);
+  } catch (e) { }
   const sheet = $("gsheet"), gear = $("gear"), rows = $("gsRows"), ins = {};
 
   /* a slider drag fires 'input' on every frame; writing localStorage on each
@@ -2895,6 +2950,16 @@ function hydrateNative(logOnly) {
       if (!r || typeof r !== "object") return;
       const p = r.p;
       if (!p || typeof p !== "object" || !normSpace(p.t)) return;
+      /* ...and a row whose person carries no name was drawn anyway: an avatar
+         with the first digit of its number in it over a blank title, a Recents
+         entry that dials but cannot be identified, sitting next to rows that
+         all name their caller. The contacts list above has always fallen back
+         to the number for exactly this case — the bridge does the same for a
+         blank CACHED_NAME — so apply the same rule here, before the row is
+         drawn or its markup is cached. A name made only of characters with no
+         shape counts as no name: trim() does not remove them, normSpace() does,
+         which is why the same test is used. */
+      if (p.n == null || !normSpace(p.n)) p.n = String(p.t).trim();
       recents.push(r);
     });
     /* The local dialled list only covers calls made since the last read, but it
