@@ -1022,7 +1022,22 @@ function initialsOf(p) {
   }
   return s;
 }
-const avColors = c => (Array.isArray(c) && c.length > 1) ? c : AV_FALLBACK;
+/* The pair the device sent, but only when both halves are actually colours.
+   They are not text: avHTML() writes them into a style attribute as
+   --a/--b, and esc() only makes a string safe for markup — it leaves a ";"
+   alone, so a palette entry like "#000;position:fixed;top:0;left:0;" ended the
+   custom property and the rest of it was read as declarations: the avatar of
+   that contact became a fixed, full-screen box over the dialer. A provider
+   that answers with numbers instead of strings (123) is no better — an invalid
+   custom property makes the gradient unparseable, so that avatar drew no
+   background at all, an invisible circle. Only a hex colour or a plain colour
+   keyword is a colour; anything else falls back to the pair the app already
+   uses for a contact with no palette. Every value this app is written with —
+   the Java side sends #rrggbb — passes unchanged. */
+const COLOUR_RE = /^(?:#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,24})$/i;
+const isColour = v => typeof v === "string" && COLOUR_RE.test(v);
+const avColors = c => (Array.isArray(c) && c.length > 1
+  && isColour(c[0]) && isColour(c[1])) ? c : AV_FALLBACK;
 const avHTML = p => {
   const c = avColors(p && p.c);
   return `<span class="av" style="--a:${esc(c[0])};--b:${esc(c[1])}">${esc(initialsOf(p))}</span>`;
@@ -1070,7 +1085,17 @@ try {
        list back. */
     try { localStorage.setItem("phone.dialed", "[]"); } catch (e) {}
   }
-} catch (e) { dialed = []; }
+} catch (e) {
+  dialed = [];
+  /* A value that is not even JSON — half written by a process that died
+     mid-setItem, or edited by hand — threw out of JSON.parse and landed here,
+     where the empty list was kept in memory but the unusable value stayed in
+     storage: every launch parsed it again and threw again, for ever. The
+     parseable-but-not-a-list case above already writes its empty list back;
+     do the same here. (The catch also covers a localStorage that throws on
+     read, which is why the write is guarded too.) */
+  try { localStorage.setItem("phone.dialed", "[]"); } catch (e2) { }
+}
 
 /* the "0" key's long-press timer, kept where the visibility handler can reach it */
 let zeroHold = null;
@@ -1864,7 +1889,18 @@ function renderRecents(filter) {
     html += recRowMarkup(r);
   }
   html = html || `<div class="empty">${missed ? "No Missed Calls" : "No Calls"}</div>`;
-  if (html === recentsHTML) { recentsShownFilter = filter; return; }   /* nothing to re-parse, nothing to lay out */
+  if (html === recentsHTML) {
+    /* nothing to re-parse, nothing to lay out — but a filter change still has
+       to start its own list at the top. When every row on screen is a missed
+       call, All and Missed build the identical string, so switching between
+       them landed here and the reader stayed scrolled wherever the other
+       filter had been, with the newest row — the one they were looking for —
+       still above the top of the screen. The write path below already resets
+       the scroll for the same reason. */
+    if (recentsShownFilter !== filter) $("v-recents").scrollTop = 0;
+    recentsShownFilter = filter;
+    return;
+  }
   /* The list is only ever written when it is the view in front of the user.
      Every dial re-rendered Recents — the tap that places a call, on the thread
      that has to draw the keypad's reaction to it — and the write is an HTML
