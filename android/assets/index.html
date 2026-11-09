@@ -997,6 +997,25 @@ const firstCodePoint = s => {
   }
   return s.slice(0, i);
 };
+/* The header a row is filed under. The list is ordered by the collator on the
+   folded name, so the header has to name the character the row is actually
+   sorted under — and firstCodePoint() skips the punctuation a name can begin
+   with, on purpose, because "(" is not anybody's initial. But a row whose name
+   starts with punctuation is sorted *with the symbols*, ahead of every digit
+   and every letter, not with the letter that follows: the header then landed
+   above the "3" block and the same letter turned up twice further down. A
+   contact saved without a name is exactly this case, because the bridge and
+   the page both fall back to the number for it — "+91 98765 43210",
+   "(555) 123-4567", "1-800-FLOWERS" — so a real address book read
+   5, 1, T, 1, 9, 3, 1, 9, A … Z, T: three headers twice over, digits and
+   letters interleaved, and a "9" block sitting above the "3" block. Those
+   rows belong under "#", which is where the collator puts them and what this
+   app already answers for a name with no initial at all. */
+function sectionOf(folded) {
+  const t = folded == null ? "" : String(folded);
+  if (t && isPunct(t.codePointAt(0))) return "#";
+  return (firstCodePoint(t) || "#").toUpperCase();
+}
 const initials = n => {
   const words = String(n == null ? "" : n).replace(INVISIBLE, "").trim()
     .split(/\s+/).filter(Boolean);
@@ -2140,7 +2159,7 @@ function buildContactIdx() {
          row is sorted under, and a name fold() does not change — every Indic,
          Arabic, Hebrew, Greek or CJK name, and every ASCII one — keeps the
          header it always had. */
-      sec: (firstCodePoint(fold(name)) || "#").toUpperCase(),
+      sec: sectionOf(fold(name)),
       /* the subtitle is the number run through fmt(), which is a regex pass and
          two slices; it cannot change, and it was rebuilt for every visible row
          on every keystroke */
@@ -3055,9 +3074,21 @@ window.__phoneLog = function () { hydrateNative(true); };
    a contact card did nothing at all. The number now lands on the keypad exactly
    as if it had been typed, ready for the call button. */
 window.__phoneNumber = function (n) {
+  /* A tel: URI built by another app is almost always percent-encoded —
+     Uri.encode() writes "*" as %2A and "#" as %23 — and the escapes were taken
+     apart as junk: "tel:%2A123%23" reached the keypad as "212323", the "%"
+     dropped, the "2" of "%2A" kept as a digit and the "23" of "%23" kept as
+     two more, so a USSD code became an ordinary number that dialled a
+     stranger. DialerActivity.numberFrom() already decodes for the intent it
+     hands over; do the same here, so this entry point cannot mangle a code
+     either. A malformed escape is not a character — decodeURIComponent()
+     throws on one, and so this keeps the string exactly as it arrived, which
+     is what Uri.decode() does on the other side. */
+  let text = String(n == null ? "" : n);
+  try { text = decodeURIComponent(text); } catch (e) { }
   /* "tel:123;ext=6" — the part after the semicolon is not the number, and its
      digits would otherwise end up on the end of it */
-  const clean = String(n == null ? "" : n).split(";")[0].replace(/[^\d+*#]/g, "").slice(0, 20);
+  const clean = text.split(";")[0].replace(/[^\d+*#]/g, "").slice(0, 20);
   if (!clean) return;
   value = clean;
   /* the number is only useful on the keypad, so that is the page it opens on */
