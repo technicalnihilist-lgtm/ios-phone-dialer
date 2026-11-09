@@ -2131,10 +2131,18 @@ function buildContactIdx() {
        so neither could be found by typing the name. The row still draws the
        name exactly as it is stored — only the key it is found by changes. */
     const name = normSpace(p.n);
+    /* fold() ran twice for every contact — once here for the search key and once
+       more, four fields down, for the section header, on the same string in the
+       same object literal. It is the expensive half of the index build: a regex
+       test for a pure-ASCII name, and an NFD normalisation plus two global
+       replaces for every name that carries an accent, a harakat or a Cyrillic
+       letter. A hydrate is the common case (the boot read, a permission result,
+       every return to the foreground), so fold once and use it for both. */
+    const folded = fold(name);
     const entry = {
       p: p,
       name: name,
-      key: fold(name).toLowerCase(),
+      key: folded.toLowerCase(),
       tel: tel,
       /* the number as it is saved ("(555) 123-4567") and the digits it actually
          dials; search needs the second one */
@@ -2159,7 +2167,7 @@ function buildContactIdx() {
          row is sorted under, and a name fold() does not change — every Indic,
          Arabic, Hebrew, Greek or CJK name, and every ASCII one — keeps the
          header it always had. */
-      sec: sectionOf(fold(name)),
+      sec: sectionOf(folded),
       /* the subtitle is the number run through fmt(), which is a regex pass and
          two slices; it cannot change, and it was rebuilt for every visible row
          on every keystroke */
@@ -2356,9 +2364,18 @@ const MOBILE = TOUCH_MAC || /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.us
    tab capsule, no number fitting). */
 const pad2 = n => (n < 10 ? "0" : "") + n;
 
+/* The time a locally dialled row is filed under. The column is a 12-hour clock
+   and every row the device sent is formatted by MainActivity.shortTime() with
+   "h:mm a" — "9:12 AM" — while this one stopped at the minutes: a call placed
+   from inside the app was written down as "9:12" and then sat in the same
+   column, one row under another, as "9:12 AM". Two rows that look like the same
+   time, one of them unable to say whether it was morning or evening, and the
+   one written by this app was always the one without the suffix. Same pattern
+   as the other side, so the two agree. */
 function stamp() {
   const d = new Date();
-  return (d.getHours() % 12 || 12) + ":" + pad2(d.getMinutes());
+  const h = d.getHours();
+  return (h % 12 || 12) + ":" + pad2(d.getMinutes()) + " " + (h < 12 ? "AM" : "PM");
 }
 
 /* The number and time of the last dial. A double tap on the green button — or on
@@ -2708,7 +2725,24 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
          string's characters onto G as G[0], G[1], G[2] — fields nothing reads,
          so the sheet silently fell back to the defaults while the unusable
          value stayed in storage. */
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) Object.assign(G, parsed);
+      /* ...and only the five fields the sheet owns may come out of it.
+         Object.assign() copies *every* own key, and one of those keys is
+         "__proto__": JSON.parse() gives it to the object as an ordinary own
+         property, but Object.assign() assigns through [[Set]], so copying it
+         replaces G's prototype with the stored object instead of adding a
+         field. Nothing below then reads the value it expects — G.v comes back
+         undefined for every field the poisoned object does not carry, the whole
+         sheet falls back to the defaults, and the entry stays in storage to do
+         it again at every launch, because the repair below cannot see the
+         prototype it never wrote. Any other stray key was worse than useless
+         too: it was merged in, never validated, and written straight back out.
+         Copy the five known names and nothing else. */
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (let f = 0; f < FIELDS.length; f++) {
+          const k = FIELDS[f][0];
+          if (Object.prototype.hasOwnProperty.call(parsed, k)) G[k] = parsed[k];
+        }
+      }
     } catch (e) { }
   }
   /* the stored values were written straight into custom properties, so a
