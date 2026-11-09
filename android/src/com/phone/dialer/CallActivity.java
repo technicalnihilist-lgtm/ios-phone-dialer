@@ -63,6 +63,8 @@ public class CallActivity extends Activity {
     static final String EXTRA_RESUME = "resume";
     /** Set when the system asked for the screen with the DTMF keypad open. */
     static final String EXTRA_KEYPAD = "keypad";
+    /** Whether the DTMF keypad panel was open, for the recreation that follows. */
+    private static final String STATE_KEYPAD = "keypadOpen";
 
     /**
      * One background thread for contact lookups. The lookup used to run on the
@@ -297,6 +299,21 @@ public class CallActivity extends Activity {
             }
         } catch (Exception ignored) { }
 
+        /* ...but an intent is only there for a *new* call, and this screen is
+           also re-created with no new call at all: a display-size or font-size
+           change does it mid-call, and so does the system under memory pressure.
+           Every other piece of state on this screen is re-derived from the call
+           on the way back up — the caller from the intent, the mute from the
+           service, the hold from STATE_HOLDING, the clock from the call's own
+           connect time — and the DTMF keypad panel was the one that was not, so
+           a keypad the user had open on a live call came back closed, with the
+           tone they were about to send hidden behind the keypad button. */
+        try {
+            if (state != null && state.getBoolean(STATE_KEYPAD, false) && keypadPanel != null) {
+                keypadPanel.setVisibility(View.VISIBLE);
+            }
+        } catch (Exception ignored) { }
+
         muteBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { toggleMute(); }
         });
@@ -355,6 +372,22 @@ public class CallActivity extends Activity {
     protected void onStop() {
         ticker.removeCallbacks(tick);
         super.onStop();
+    }
+
+    /**
+     * The one piece of this screen's state that cannot be re-derived from the
+     * call it is showing: whether the DTMF keypad panel was open. Saved for the
+     * recreation described in onCreate() — a font-size or display-size change
+     * mid-call, or a system-initiated recreation under memory pressure.
+     */
+    @Override
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        try {
+            if (out != null && keypadPanel != null) {
+                out.putBoolean(STATE_KEYPAD, keypadPanel.getVisibility() == View.VISIBLE);
+            }
+        } catch (Exception ignored) { }
     }
 
     /**
