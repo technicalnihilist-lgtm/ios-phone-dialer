@@ -292,8 +292,20 @@ public class CallActivity extends Activity {
         /* The system can ask for this screen with the DTMF keypad open
            (onBringToForeground(true)); a screen created by that request used to
            ignore it and come up with the keypad closed. */
+        /* ...but only on the first creation. The intent lives as long as the
+           activity does, so EXTRA_KEYPAD describes the moment this screen was
+           first opened, not the state the user has since left it in. The system
+           asking for the screen with the dialpad open (onBringToForeground(true))
+           leaves that extra standing, and nothing clears it when the user
+           closes the dialpad: the next recreation — a font-size or display-size
+           change, or the system under memory pressure — re-read it and reopened
+           a keypad the user had deliberately closed, on top of the tone they
+           were about to send. A recreation arrives with the saved state, which
+           is the authority on whether the panel was open; the intent only
+           answers that question when there is no saved state to ask. */
         try {
-            if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_KEYPAD, false)
+            if (state == null && getIntent() != null
+                    && getIntent().getBooleanExtra(EXTRA_KEYPAD, false)
                     && keypadPanel != null) {
                 keypadPanel.setVisibility(View.VISIBLE);
             }

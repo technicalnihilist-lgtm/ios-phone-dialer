@@ -73,6 +73,21 @@ cp build/base.apk build/unsigned.apk
 # files — a NoClassDefFoundError at runtime with nothing to show it went wrong.
 ( cd build && zip -q -j unsigned.apk dex/*.dex )
 
+# The runbook asks for this by hand after every build, because an index.html that
+# did not land in the APK ships the previous build's UI under a new version
+# number — the exact defect the copy at the top of this script was added for.
+# Take the check here, where it cannot be forgotten: the asset the APK actually
+# carries has to be byte for byte the page in the repository root.
+if [ -f ../index.html ]; then
+  WANT=$(md5sum ../index.html | cut -d' ' -f1)
+  GOT=$(unzip -p build/unsigned.apk assets/index.html | md5sum | cut -d' ' -f1)
+  if [ "$WANT" != "$GOT" ]; then
+    echo "!! assets/index.html in the APK ($GOT) is not ../index.html ($WANT)"
+    exit 1
+  fi
+  echo "   packaged assets/index.html matches ../index.html ($WANT)"
+fi
+
 echo "== zipalign"
 zipalign -f -p 4 build/unsigned.apk build/aligned.apk
 

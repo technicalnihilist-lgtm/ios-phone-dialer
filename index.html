@@ -138,7 +138,15 @@ button{font-family:inherit;color:inherit}
 .match:active{opacity:.55}
 
 .pad{
-  display:grid;grid-template-columns:repeat(3,var(--k));gap:var(--vgap) var(--gap);
+  display:grid;grid-template-columns:repeat(3,var(--k));
+  /* grid-gap is the name every grid engine knows; gap only became the alias for
+     it in Chrome 66. Between 57 (the first grid) and 65 the alias was not
+     understood, the declaration was dropped, and the three-column keypad drew
+     its keys touching each other — the same class of gap the clamp() and dvh
+     fallbacks above exist to close. The longhand first, the alias after it, so
+     an engine that knows gap is untouched and one that does not still gets a
+     keypad. */
+  grid-gap:var(--vgap) var(--gap);gap:var(--vgap) var(--gap);
   margin-top:auto;
 }
 .key{
@@ -163,7 +171,7 @@ button{font-family:inherit;color:inherit}
 
 .callrow{
   flex:none;display:grid;grid-template-columns:repeat(3,var(--k));
-  gap:0 var(--gap);justify-items:center;margin-top:calc(var(--vgap) + 8px);
+  grid-gap:0 var(--gap);gap:0 var(--gap);justify-items:center;margin-top:calc(var(--vgap) + 8px);
   padding-bottom:4px;
 }
 .call{
@@ -245,7 +253,7 @@ button{font-family:inherit;color:inherit}
 }
 
 /* favorites */
-.favs{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:2px 16px 8px}
+.favs{display:grid;grid-template-columns:1fr 1fr;grid-gap:11px;gap:11px;padding:2px 16px 8px}
 .fav{
   display:flex;flex-direction:column;align-items:center;gap:2px;padding:16px 8px 13px;
   border:0;border-radius:18px;background:var(--card);cursor:pointer;text-align:center;
@@ -320,7 +328,7 @@ button{font-family:inherit;color:inherit}
 .cs-status{font-size:17px;color:rgba(255,255,255,.6);font-variant-numeric:tabular-nums}
 .cs-actions{
   margin-top:auto;display:grid;grid-template-columns:repeat(3,1fr);
-  gap:24px 8px;justify-items:center;padding-bottom:34px;
+  grid-gap:24px 8px;gap:24px 8px;justify-items:center;padding-bottom:34px;
 }
 .cs-btn{
   display:flex;flex-direction:column;align-items:center;gap:7px;
@@ -563,7 +571,7 @@ button{font-family:inherit;color:inherit}
   background:var(--fill);color:var(--label);transition:transform .7s var(--spring),background .2s;
 }
 .gs-pre button:active{transform:scale(.92);background:var(--fill-press);transition:transform .12s,background 0s}
-.gs-row{display:grid;grid-template-columns:1fr auto;gap:0 8px;padding:5px 0 0}
+.gs-row{display:grid;grid-template-columns:1fr auto;grid-gap:0 8px;gap:0 8px;padding:5px 0 0}
 .gs-row label{font-size:14px}
 .gs-row output{font-size:13px;color:var(--label2);font-variant-numeric:tabular-nums}
 .gs-row input{grid-column:1/-1;width:100%;height:28px;margin:0;background:none;-webkit-appearance:none;appearance:none;touch-action:pan-y}
@@ -1609,8 +1617,14 @@ function dialable(txt) {
      fourteen digits that are neither of the two numbers. The comma case was
      fixed the same way (a run ends where the characters stop belonging to a
      number); a line break ends it as well. One line at a time, first match. */
-  if (s.indexOf("\n") < 0 && s.indexOf("\r") < 0) return firstDialRun(s);
-  const lines = s.split(/\r\n|\r|\n/);
+  /* A tab is the third separator a clip of numbers arrives with, and it was the
+     one still being ignored: copying a row out of a spreadsheet — the way a
+     column of numbers is most often lifted — gives "555-1234\t987-6543", and
+     \s matches a tab, so the two numbers were read as one fourteen-digit run
+     and dialled as a single stranger's number. The comma and the line break
+     were already treated as ends; treat the tab as one too. */
+  if (s.indexOf("\n") < 0 && s.indexOf("\r") < 0 && s.indexOf("\t") < 0) return firstDialRun(s);
+  const lines = s.split(/\r\n|\r|\n|\t/);
   for (let i = 0; i < lines.length; i++) {
     const run = firstDialRun(lines[i]);
     if (run) return run;
