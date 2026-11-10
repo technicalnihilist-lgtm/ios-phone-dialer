@@ -1078,6 +1078,17 @@ const $ = id => document.getElementById(id);
 const app = $("app"), num = $("num"), pad = $("pad"), del = $("del"),
       hint = $("addnum"), matchEl = $("match"), matchAv = $("matchAv"),
       matchName = $("matchName"), dialtop = $("dialtop");
+/* The rest of the page's elements, resolved here with the ones above. They are
+   looked up by id again and again further down — the search box on every
+   keystroke, the two scroll containers on every query, #contacts on every
+   rebuild, #device on every long press, #gsheet and #install on every call —
+   and each of those lookups is a walk of the document for an element that
+   never changes. The Paste menu and the glass sheet were already kept this
+   way for exactly this reason (see overlayMenu); keep the others the same.
+   Resolved once, before anything below can call into them. */
+const qEl = $("q"), contactsEl = $("contacts"), recentsEl = $("recents"),
+      favsEl = $("favs"), deviceEl = $("device"), installEl = $("install"),
+      vContactsEl = $("v-contacts"), vRecentsEl = $("v-recents");
 let value = "";
 
 /* call history, restored from storage before anything renders */
@@ -1577,7 +1588,7 @@ function openMenu(x, y) {
      overlayMenu — the same handle overlayOpen() reads on every hardware key.
      Looking it up by id again here, and again in closeMenu() below, was two
      fresh document lookups for an element the page resolved once at load. */
-  const menu = overlayMenu, r = $("device").getBoundingClientRect();
+  const menu = overlayMenu, r = deviceEl.getBoundingClientRect();
   menu.classList.add("show");
   const w = menu.offsetWidth;   /* only the width is needed; the height read was unused and forced a layout */
   menu.style.left = Math.max(8, Math.min(x - r.left - w / 2, r.width - w - 8)) + "px";
@@ -1775,7 +1786,7 @@ function showView(i) {
      screen — received nothing. The soft keyboard stayed up over the keypad for
      the same reason. Release the focus on the way out; the text in the box is
      kept, so coming back shows the list still filtered. */
-  if (NAMES[cur] === "contacts") $("q").blur();
+  if (NAMES[cur] === "contacts") qEl.blur();
   const d = i > cur ? "goR" : "goL";
   const old = $("v-" + NAMES[cur]);
   document.querySelectorAll(".view.leaving").forEach(v => v.classList.remove("leaving"));
@@ -1795,7 +1806,7 @@ function showView(i) {
      hydrateNative(). renderContacts() compares the rows it would draw against the
      rows already on screen, so calling it here costs a walk over the index rather
      than a rebuild of the list. */
-  else if (NAMES[i] === "contacts") renderContacts($("q").value || "");
+  else if (NAMES[i] === "contacts") renderContacts(qEl.value || "");
   /* the keypad can be resized while it is off screen — the soft keyboard opening
      over the contacts search, a window resize — and fitNumber() cannot measure a
      hidden line, because clientWidth is 0: it gives up and leaves the cached
@@ -1922,7 +1933,7 @@ function renderFavs() {
   }
   if (html === favsHTML) return;
   favsHTML = html;
-  $("favs").innerHTML = html;
+  favsEl.innerHTML = html;
 }
 renderFavs();
 
@@ -2011,7 +2022,7 @@ function renderRecents(filter) {
        filter had been, with the newest row — the one they were looking for —
        still above the top of the screen. The write path below already resets
        the scroll for the same reason. */
-    if (recentsShownFilter !== filter) $("v-recents").scrollTop = 0;
+    if (recentsShownFilter !== filter) vRecentsEl.scrollTop = 0;
     recentsShownFilter = filter;
     return;
   }
@@ -2024,7 +2035,7 @@ function renderRecents(filter) {
      moment they become visible. Leave the DOM alone and let that render answer
      the question, exactly as the Contacts list is built when its tab is opened. */
   recentsHTML = html;
-  $("recents").innerHTML = html;
+  recentsEl.innerHTML = html;
   /* Switching All to Missed kept the scroll position of the other list: someone
      who had scrolled to the bottom of forty calls and then tapped Missed landed
      at the bottom of the two rows that were left, with the newest missed call —
@@ -2032,7 +2043,7 @@ function renderRecents(filter) {
      search already starts each of its results at the top for the same reason.
      A re-render of the same filter — a dial, a return to the foreground — is
      left where the reader was. */
-  if (recentsShownFilter !== filter) $("v-recents").scrollTop = 0;
+  if (recentsShownFilter !== filter) vRecentsEl.scrollTop = 0;
   recentsShownFilter = filter;
 }
 renderRecents("all");
@@ -2259,7 +2270,7 @@ function buildContactIdx() {
      few thousand nodes on a real address book. Only drop them when the Contacts
      tab is not the one on screen; when it is, hydrateNative() re-renders the
      list in this same task, and clearing first would only cost an extra parse. */
-  if (app.dataset.view !== "contacts") $("contacts").innerHTML = "";
+  if (app.dataset.view !== "contacts") contactsEl.innerHTML = "";
 }
 /*
  * The markup of one row depends only on the contact it draws, and a contact
@@ -2287,6 +2298,11 @@ function rowMarkup(e) {
   }
   return html;
 }
+/* The digits a query is looked for by, or "" when the query is not a number at
+   all. "office 2" is a name search and must not list every contact whose number
+   holds a 2; "555" is a number search. One rule, asked twice: for the query
+   being rendered and for the one before it. */
+const numQuery = r => /^[0-9\s()+\-.,]+$/.test(r) ? r.replace(/[^0-9]/g, "") : "";
 function renderContacts(q) {
   /* Trimmed, and with every run of spaces collapsed to one — the same shape the
      index keys are built in. A search box that ends in a space is not a corner
@@ -2302,6 +2318,9 @@ function renderContacts(q) {
      of rows out of three thousand looked as though it had matched nothing at
      all. Each query starts at the top of its own results. */
   const newQuery = raw !== lastQuery;
+  /* The query the list on screen was built for, kept before it is replaced: a
+     query that only *grows* can be answered from the previous answer. */
+  const prevRaw = lastQuery;
   lastQuery = raw;
   /* the query is folded the same way the stored names are, so typing "josé"
      finds "José" instead of nothing at all */
@@ -2313,11 +2332,31 @@ function renderContacts(q) {
      contact whose number happened to contain that digit — a name search that
      returned the whole address book. Digits are a number search only when
      there is nothing else in the box. */
-  const needleDig = /^[0-9\s()+\-.,]+$/.test(raw) ? needle.replace(/[^0-9]/g, "") : "";
+  const needleDig = numQuery(raw);
+  /* One keystroke in the search box used to re-test every contact in the book.
+     A query that only extends the one before it — which is what typing is —
+     cannot match anybody the shorter query did not already match: fold() and
+     the digit stripping both map a string to something its prefix maps to, so
+     "ravi" can only ever select rows "rav" already selected. Answer it from
+     the previous answer instead of from the whole index. shownRows is the list
+     the last render picked, and buildContactIdx() drops it whenever the book
+     changes, so it can never describe a different address book than this one.
+     Only a longer query that starts with the previous one qualifies; a
+     backspace, a replacement, or a query that starts again from empty takes
+     the full scan. */
+  const base = (shownRows && prevRaw !== null && raw.length > prevRaw.length
+                && raw.lastIndexOf(prevRaw, 0) === 0
+                /* ...and the digit test must not have been switched on by this
+                   keystroke. It is only asked when the query holds a digit, so
+                   "(" searched by itself could not have selected the rows that
+                   "(5" reaches through the numbers; widening the test mid-query
+                   means the previous answer is not a superset and the whole
+                   index has to be walked. */
+                && (numQuery(prevRaw) !== "" || needleDig === "")) ? shownRows : contactIdx;
   const picked = pickBuf;
   picked.length = 0;
-  for (let i = 0; i < contactIdx.length; i++) {
-    const e = contactIdx[i];
+  for (let i = 0; i < base.length; i++) {
+    const e = base[i];
     if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0
         && !(needleDig && e.dig.indexOf(needleDig) >= 0)) continue;
     picked.push(e);
@@ -2339,7 +2378,7 @@ function renderContacts(q) {
        same needle and picks the same rows: it landed here, and the reader was
        left scrolled into the middle of the list they had just searched for. The
        Recents filter already resets on a filter change for the same reason. */
-    if (newQuery) $("v-contacts").scrollTop = 0;
+    if (newQuery) vContactsEl.scrollTop = 0;
     return;
   }
   shownRows = picked.slice();
@@ -2350,17 +2389,17 @@ function renderContacts(q) {
     if (e.sec !== last) { out += e.secHTML; last = e.sec; }
     out += e.html;
   }
-  $("contacts").innerHTML = out || '<div class="empty">No Contacts</div>';
+  contactsEl.innerHTML = out || '<div class="empty">No Contacts</div>';
   /* a render for a query that changed brings a different list, and that list is
      read from its first row. A render for the same query — the tab being opened
      again, a hydrate — leaves the reader where they were. */
-  if (newQuery) $("v-contacts").scrollTop = 0;
+  if (newQuery) vContactsEl.scrollTop = 0;
 }
 buildContactIdx();
 renderContacts("");
 /* a burst of keystrokes renders once per frame instead of once per character */
 let qQueued = false, qValue = "";
-$("q").addEventListener("input", e => {
+qEl.addEventListener("input", e => {
   qValue = e.target.value;
   if (qQueued) return;
   qQueued = true;
@@ -2374,7 +2413,7 @@ $("q").addEventListener("input", e => {
 function flushSearch() {
   if (!qQueued) return;
   qQueued = false;
-  renderContacts($("q").value || "");
+  renderContacts(qEl.value || "");
 }
 
 const vmRows = voicemails.filter(v => people[v.i]);
@@ -2534,14 +2573,14 @@ function startCallTimer() {
    knows it, which also takes it out of the tab order) and restore each one
    afterwards; #gsheet keeps the aria-hidden its own open()/close() sets. */
 function behindCall(hidden) {
-  const parts = [app, tabbar, $("install")];
+  const parts = [app, tabbar, installEl];
   for (let i = 0; i < parts.length; i++) {
     const el = parts[i];
     if (!el) continue;
     el.setAttribute("aria-hidden", hidden ? "true" : "false");
     try { el.inert = hidden; } catch (e) { }
   }
-  const gs = $("gsheet");
+  const gs = overlaySheet;
   if (gs) {
     /* the sheet's own open()/close() decides whether it is inert; a call only
        ever adds to that. Setting it to `hidden` alone made a closed sheet
@@ -2671,7 +2710,7 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
 }
 
 (function installTip() {
-  const card = $("install"), btn = $("installBtn"), x = $("installX");
+  const card = installEl, btn = $("installBtn"), x = $("installX");
   if (!card) return;
   /* the "x" was only wired up on the browser path, so inside the Android app the
      card came back on every launch with a dismiss button that did nothing and no
@@ -2840,7 +2879,7 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     const want = JSON.stringify(G);
     if (storedGlass !== null && storedGlass !== want) localStorage.setItem("phone.glass", want);
   } catch (e) { }
-  const sheet = $("gsheet"), gear = $("gear"), rows = $("gsRows"), ins = {};
+  const sheet = overlaySheet, gear = $("gear"), rows = $("gsRows"), ins = {};
 
   /* a slider drag fires 'input' on every frame; writing localStorage on each
      one meant ~60 synchronous JSON writes a second while dragging */
@@ -3141,7 +3180,7 @@ function hydrateNative(logOnly) {
      foreground: with the Contacts tab open, each resume rebuilt all three
      thousand rows into a string and then threw it away because it matched the
      cached one — about 33 ms of main-thread work per resume, measured. */
-  if (freshPeople && app.dataset.view === "contacts") renderContacts($("q").value || "");
+  if (freshPeople && app.dataset.view === "contacts") renderContacts(qEl.value || "");
   /* the keypad was never repainted after a data load. A number typed while the
      contacts were still being read — or before the permission result arrived —
      therefore showed no contact match under it, and kept the font size it had

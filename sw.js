@@ -1,4 +1,15 @@
-const CACHE = "phone-v2";
+/* The name of the cache this build writes, and the only thing that makes the
+   worker re-install: a service worker is updated by a byte change in this file
+   and nothing else, so a constant here meant `install` ran once, the first time
+   the app was ever opened, and never again. Everything it precaches was then
+   fixed at that first install: the navigate path below does refresh
+   ./index.html from the network on every online open, but nothing ever refreshed
+   the "./" entry beside it, so an installed app opened from the site root while
+   offline served the very first build's page — months of releases behind, with
+   no way to notice. Keep the build's version in this string and bump it with
+   the manifest; install then runs once per release, precaches both entries from
+   the network, and the activate handler drops the previous cache. */
+const CACHE = "phone-2.6.39";
 /* every cache this app owns starts with this, so the activate handler below can
    tell its own from the ones other apps on the same origin keep */
 const PREFIX = "phone-";
