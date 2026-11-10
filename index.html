@@ -1188,6 +1188,10 @@ KEYS.forEach(([d, l], n) => {
    no /g and is only ever handed to test(). */
 const FMT_SYMBOL = /[*#+]/;
 const FMT_NON_DIGIT = /\D/g;
+/* ...and the "#" pass placeCall() writes a tel: URL with, on the two paths that
+   hand a number to the system. A literal inside each of them rebuilt the same
+   pattern on every call. Same rule as the two above. */
+const HASH_ALL = /#/g;
 function fmt(v) {
   const d = v.replace(FMT_NON_DIGIT, "");
   /* only a leading "+" used to survive: one typed on a keyboard, or inserted by
@@ -1259,10 +1263,16 @@ function fmtCached(v) {
    answers all of it. The pattern carries no /g flag, so test() cannot leave a
    lastIndex behind for the next call to start from. */
 const NEEDS_NORM = /[^\x20-\x7e]|^\s|\s$|\s\s/;
+/* the run-of-spaces collapse below, hoisted out of the function that uses it:
+   normSpace() runs for every contact's name on every hydrate (three times per
+   contact on a full read) and for every keystroke in the search box, and a
+   regex literal there compiled the same pattern again on each of them. It is
+   only ever handed to replace(), which resets lastIndex itself. */
+const WS_RUN = /\s+/g;
 const normSpace = s => {
   const t = String(s == null ? "" : s);
   return t && NEEDS_NORM.test(t)
-    ? t.replace(INVISIBLE, "").replace(/\s+/g, " ").trim()
+    ? t.replace(INVISIBLE, "").replace(WS_RUN, " ").trim()
     : t;
 };
 
@@ -1342,7 +1352,7 @@ const telCache = new WeakMap();
 function telOf(p) {
   let s = telCache.get(p);
   if (s === undefined) {
-    s = String(p.t == null ? "" : p.t).replace(/[^0-9]/g, "");
+    s = String(p.t == null ? "" : p.t).replace(FMT_NON_DIGIT, "");
     telCache.set(p, s);
   }
   return s;
@@ -1369,7 +1379,7 @@ function findMatch() {
      or *1234567# over one saved as 1234567 — drew that person's chip under the
      code, and tapping the chip rang them. No match for a value carrying * or #. */
   if (USSD_SYMBOL.test(value)) return (matchFound = null);
-  const d = value.replace(/\D/g, "");
+  const d = value.replace(FMT_NON_DIGIT, "");
   if (d.length < 3) return (matchFound = null);
   /* A fourth test used to sit here: lowerOf(p).startsWith(value.toLowerCase()).
      The keypad can only ever hold digits, "*", "#" and "+" — add(), the
@@ -1589,8 +1599,19 @@ document.addEventListener("keydown", e => {
      fixes, for the rest of the app. A hardware keyboard only types into the
      keypad while the keypad is the view in front of it. */
   if (app.dataset.view !== "keypad") return;
-  if (KEYPAD_KEY.test(e.key)) add(e.key);
-  else if (e.key === "Backspace" && value) { value = value.slice(0, -1); render(); bump(); }
+  /* Backspace is the one key this handler acts on that also has a default action
+     of its own, and on the engine this page is written for — the Chrome 51
+     WebView an Android 7 phone shipped with, which is why padStart and async are
+     avoided further down — that action is "navigate back". Pressing Backspace on
+     the keypad therefore deleted a digit *and* left the app: the page was
+     replaced by the previous document, or by an empty one, and a half-typed
+     number went with it. Consume the keys this handler acts on, so the keypad is
+     the only thing that sees them. */
+  if (KEYPAD_KEY.test(e.key)) { e.preventDefault(); add(e.key); }
+  else if (e.key === "Backspace") {
+    e.preventDefault();
+    if (value) { value = value.slice(0, -1); render(); bump(); }
+  }
 });
 
 /* long-press the empty area above the keypad → Paste */
@@ -1754,6 +1775,13 @@ $("pasteBtn").addEventListener("click", () => {
 const tabs = [...document.querySelectorAll(".tab")];
 const tabbar = $("tabbar"), pill = $("pill");
 const NAMES = ["favorites","recents","contacts","keypad","voicemail"];
+/* the five view elements, resolved once. showView() looked the outgoing view up
+   by id — "v-" + NAMES[cur] — on every tab change, and swept the whole document
+   with querySelectorAll(".view.leaving") to find the one it had marked last
+   time. One reference answers both, and it is the only element that can carry
+   the class. */
+const viewEls = NAMES.map(n => $( "v-" + n));
+let leavingEl = null;
 let cur = 3, drag = null;
 
 const mid = t => t.offsetLeft + t.offsetWidth / 2;
@@ -1827,16 +1855,24 @@ function showView(i) {
      kept, so coming back shows the list still filtered. */
   if (NAMES[cur] === "contacts") qEl.blur();
   const d = i > cur ? "goR" : "goL";
-  const old = $("v-" + NAMES[cur]);
-  document.querySelectorAll(".view.leaving").forEach(v => v.classList.remove("leaving"));
+  const old = viewEls[cur];
+  /* a switch that interrupts the previous one cleared its timeout below, so the
+     view that was leaving never got its class removed by that timer: clear it
+     here, off the one reference that knows which view it was */
+  if (leavingEl) leavingEl.classList.remove("leaving");
   app.classList.remove("goR","goL");
   app.dataset.view = NAMES[i];
   old.classList.add("leaving");
+  leavingEl = old;
   void app.offsetWidth;
   app.classList.add(d);
   cur = i;
   clearTimeout(showView.t);
-  showView.t = setTimeout(() => { app.classList.remove(d); old.classList.remove("leaving"); }, 1200);
+  showView.t = setTimeout(() => {
+    app.classList.remove(d);
+    old.classList.remove("leaving");
+    if (leavingEl === old) leavingEl = null;
+  }, 1200);
   /* the Recents list is drawn here rather than on every dial — see
      renderRecents() — so this is the moment its markup is built, and the All/
      Missed capsule is placed after it so the two agree on the same rows */
@@ -2254,7 +2290,7 @@ function buildContactIdx() {
       tel: tel,
       /* the number as it is saved ("(555) 123-4567") and the digits it actually
          dials; search needs the second one */
-      dig: tel.replace(/\D/g, ""),
+      dig: tel.replace(FMT_NON_DIGIT, ""),
       /* the section header this row falls under: the name cannot change, so it
          was pointless rebuilding and upper-casing it for every contact on every
          keystroke */
@@ -2345,8 +2381,10 @@ function rowMarkup(e) {
    rendered and once for the one before it — and both patterns were literals
    inside the arrow function, so two RegExp objects were built per call. */
 const NUM_QUERY = /^[0-9\s()+\-.,]+$/;
-const NUM_DIGITS = /[^0-9]/g;
-const numQuery = r => NUM_QUERY.test(r) ? r.replace(NUM_DIGITS, "") : "";
+/* the digits-only pass was a second copy of FMT_NON_DIGIT — the same class, the
+   same /g, one more object to build at load and one more name to keep in step.
+   Ask the one that already exists. */
+const numQuery = r => NUM_QUERY.test(r) ? r.replace(FMT_NON_DIGIT, "") : "";
 function renderContacts(q) {
   /* Trimmed, and with every run of spaces collapsed to one — the same shape the
      index keys are built in. A search box that ends in a space is not a corner
@@ -2575,12 +2613,12 @@ function placeCall(number, name) {
     try {
       PhoneNative.dial(d);                      // native app: place a real call
     } catch (err) {
-      window.location.href = "tel:" + d.replace(/#/g, "%23");
+      window.location.href = "tel:" + d.replace(HASH_ALL, "%23");
     }
   } else if (MOBILE) {
     /* a bare "#" starts a URI fragment, so *123# and *#06# reached the system
        dialer cut off at the "#" — the same bug the native bridge already fixed */
-    window.location.href = "tel:" + d.replace(/#/g, "%23");   // browser: hand off to the system dialer
+    window.location.href = "tel:" + d.replace(HASH_ALL, "%23");   // browser: hand off to the system dialer
   } else {
     startCall(d, { n: name || fmt(d) });        // desktop: show the in-app call screen
   }
@@ -2588,6 +2626,10 @@ function placeCall(number, name) {
 
 /* ---------------- call screen ---------------- */
 const device = $("device"), cs = $("callscreen"), csName = $("csName"), csStatus = $("csStatus");
+/* the six in-call controls, resolved once: endCall() cleared the .on class off
+   them by re-querying the document on every hang-up, and the listeners below
+   queried them again. One list answers both. */
+const csBtns = [...document.querySelectorAll(".cs-btn")];
 /* The sheet is closed to begin with, and closed means only visibility:hidden —
    which the browser applies when the .8 s exit transition ends, not when the
    class comes off. aria-hidden says nothing to the tab order either, so for
@@ -2645,7 +2687,7 @@ function behindCall(hidden) {
 }
 
 function startCall(number, person) {
-  if (number.replace(/\D/g,"") === "" && !person) return;
+  if (number.replace(FMT_NON_DIGIT, "") === "" && !person) return;
   csName.textContent = person ? person.n : fmt(number);
   csStatus.textContent = "calling…";
   cs.classList.add("show");
@@ -2673,10 +2715,15 @@ function endCall() {
      screen to say why. A double tap cannot span a call that has ended, so the
      guard starts over here. */
   lastDial = "";
-  document.querySelectorAll(".cs-btn.on").forEach(b => {
+  /* the six controls were re-queried from the document on every hang-up for the
+     four of them that can carry .on; they are already resolved below for their
+     listeners, so ask that list */
+  for (let i = 0; i < csBtns.length; i++) {
+    const b = csBtns[i];
+    if (!b.classList.contains("on")) continue;
     b.classList.remove("on");
     b.setAttribute("aria-pressed", "false");   /* the state above was cleared */
-  });
+  }
   cs.classList.remove("show");
   device.classList.remove("calling");
   cs.setAttribute("aria-hidden","true");
@@ -2684,7 +2731,7 @@ function endCall() {
   behindCall(false);
 }
 $("csEnd").addEventListener("click", endCall);
-document.querySelectorAll(".cs-btn").forEach(b => {
+csBtns.forEach(b => {
   /* these six controls change state on screen (mute on, keypad open) and told a
      screen reader nothing at all; the All/Missed control already exposes its
      state this way, so the call sheet's controls now do too */

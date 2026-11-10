@@ -185,103 +185,115 @@ public class MainActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     private WebView createWebView() {
         WebView w = new WebView(this);
-        w.setBackgroundColor(Color.BLACK);
-        w.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        w.setVerticalScrollBarEnabled(false);
-        w.setHorizontalScrollBarEnabled(false);
+        /* Everything from here on can throw — getSettings() on a broken or
+           half-updated WebView package, the JavaScript interface, the load
+           itself — and onCreate() (and onRenderProcessGone()) catch that and
+           close the app. What they could not do is tear the view down: it was
+           never installed as the content view, so nothing else ever would, and
+           its renderer and its JavaScript bridge — which holds this Activity —
+           outlived the failed launch. Release it on the way out. */
+        boolean ok = false;
+        try {
+            w.setBackgroundColor(Color.BLACK);
+            w.setOverScrollMode(View.OVER_SCROLL_NEVER);
+            w.setVerticalScrollBarEnabled(false);
+            w.setHorizontalScrollBarEnabled(false);
 
-        pageReady = false;
+            pageReady = false;
 
-        WebSettings s = w.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setAllowFileAccess(true);
-        s.setAllowContentAccess(true);
-        s.setSupportZoom(false);
-        s.setBuiltInZoomControls(false);
-        s.setDisplayZoomControls(false);
-        s.setTextZoom(100);
+            WebSettings s = w.getSettings();
+            s.setJavaScriptEnabled(true);
+            s.setDomStorageEnabled(true);
+            s.setAllowFileAccess(true);
+            s.setAllowContentAccess(true);
+            s.setSupportZoom(false);
+            s.setBuiltInZoomControls(false);
+            s.setDisplayZoomControls(false);
+            s.setTextZoom(100);
 
-        w.addJavascriptInterface(new Bridge(), "PhoneNative");
-        w.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handoff(url);
-            }
-
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return handoff(request.getUrl().toString());
-            }
-
-            /**
-             * The renderer is a separate process and the system kills it when
-             * memory runs low — a large contact list and a live call at the same
-             * time is enough. With no handler here the app process was taken down
-             * with it, so the dialer simply vanished mid-use. Tear the dead view
-             * down and put a fresh one in its place; only the page state (a
-             * half-typed number) is lost.
-             */
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                if (view != web) return;
-                pageReady = true;
-                deliverPendingDial();
-                deliverPendingHydrate();
-            }
-
-            @Override
-            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
-                /* A renderer can also die for a view this activity has already
-                   thrown away — the one an earlier restart tore down. Nothing
-                   on screen belonged to it, yet the code below still built a
-                   replacement and installed it: the healthy page was replaced,
-                   the number being typed on it was lost and every contact was
-                   read again, for a view nobody was looking at. Decide first,
-                   then clean up. */
-                final boolean current = (view == web);
-                destroyWebView(view);
-                if (!current) return true;   /* handled: not the page on screen */
-                web = null;
-                /* The page that comes back is a brand-new document: the contact
-                   list, the call log and the cached index all went with the dead
-                   renderer, and nothing re-read them for the new one. The app
-                   then showed "No Contacts" and "No Calls" until the process
-                   was killed and started again. Ask for a full read once the
-                   fresh page reports that it has loaded. */
-                pendingHydrate = true;
-                if (!isFinishing() && !isDestroyed()) {
-                    /* Constructing a WebView throws when the system WebView is
-                       missing, disabled or half-way through an update — the
-                       exact case onCreate() already guards. Here it was called
-                       bare, so a renderer that died *because* the WebView
-                       package was broken came straight back through this
-                       callback and took the process down from an exception
-                       thrown inside a framework callback, which is the one
-                       thing returning true here is meant to prevent. Build it
-                       the way onCreate() does: with no page to be had, say so
-                       and close. */
-                    WebView fresh = null;
-                    try {
-                        fresh = createWebView();
-                    } catch (Throwable t) {
-                        web = null;
-                    }
-                    if (fresh != null) {
-                        setContentView(fresh);
-                    } else {
-                        toast("Phone needs the Android System WebView — enable or reinstall it in Settings");
-                        finish();
-                    }
+            w.addJavascriptInterface(new Bridge(), "PhoneNative");
+            w.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                    return handoff(url);
                 }
-                return true;   /* handled: do not let the system kill the app */
-            }
-        });
 
-        w.loadUrl("file:///android_asset/index.html");
-        web = w;
-        return w;
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    return handoff(request.getUrl().toString());
+                }
+
+                /**
+                 * The renderer is a separate process and the system kills it when
+                 * memory runs low — a large contact list and a live call at the same
+                 * time is enough. With no handler here the app process was taken down
+                 * with it, so the dialer simply vanished mid-use. Tear the dead view
+                 * down and put a fresh one in its place; only the page state (a
+                 * half-typed number) is lost.
+                 */
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    super.onPageFinished(view, url);
+                    if (view != web) return;
+                    pageReady = true;
+                    deliverPendingDial();
+                    deliverPendingHydrate();
+                }
+
+                @Override
+                public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                    /* A renderer can also die for a view this activity has already
+                       thrown away — the one an earlier restart tore down. Nothing
+                       on screen belonged to it, yet the code below still built a
+                       replacement and installed it: the healthy page was replaced,
+                       the number being typed on it was lost and every contact was
+                       read again, for a view nobody was looking at. Decide first,
+                       then clean up. */
+                    final boolean current = (view == web);
+                    destroyWebView(view);
+                    if (!current) return true;   /* handled: not the page on screen */
+                    web = null;
+                    /* The page that comes back is a brand-new document: the contact
+                       list, the call log and the cached index all went with the dead
+                       renderer, and nothing re-read them for the new one. The app
+                       then showed "No Contacts" and "No Calls" until the process
+                       was killed and started again. Ask for a full read once the
+                       fresh page reports that it has loaded. */
+                    pendingHydrate = true;
+                    if (!isFinishing() && !isDestroyed()) {
+                        /* Constructing a WebView throws when the system WebView is
+                           missing, disabled or half-way through an update — the
+                           exact case onCreate() already guards. Here it was called
+                           bare, so a renderer that died *because* the WebView
+                           package was broken came straight back through this
+                           callback and took the process down from an exception
+                           thrown inside a framework callback, which is the one
+                           thing returning true here is meant to prevent. Build it
+                           the way onCreate() does: with no page to be had, say so
+                           and close. */
+                        WebView fresh = null;
+                        try {
+                            fresh = createWebView();
+                        } catch (Throwable t) {
+                            web = null;
+                        }
+                        if (fresh != null) {
+                            setContentView(fresh);
+                        } else {
+                            toast("Phone needs the Android System WebView — enable or reinstall it in Settings");
+                            finish();
+                        }
+                    }
+                    return true;   /* handled: do not let the system kill the app */
+                }
+            });
+
+            web = w;
+            ok = true;
+            return w;
+        } finally {
+            if (!ok) destroyWebView(w);
+        }
     }
 
     /**
@@ -565,6 +577,17 @@ public class MainActivity extends Activity {
      */
     private boolean handoff(String url) {
         if (url == null) return true;
+        /* A URI scheme is case-insensitive (RFC 3986), and nothing on this path
+           lowercased it: the WebView hands over the string exactly as the page
+           wrote it, so a link written "TEL:123" — which some apps and a few
+           system components do emit, and which Uri.parse() keeps in the case it
+           was given — failed every startsWith() below and was then refused by
+           the last line. The tap did nothing at all, silently, where the same
+           link in lower case dials. DialerActivity.numberFrom() already compares
+           the scheme with regionMatches(..., true, ...) for exactly this reason;
+           the two halves of the same handoff now agree. The original string is
+           still what is parsed and started, so the number keeps its case. */
+        final String lower = url.toLowerCase(Locale.US);
         /* A tel: link is a dial request, and ACTION_VIEW is not one: this app
            declares only ACTION_DIAL for the tel scheme (that is what makes it
            eligible for the dialer role), so a page that fell back to a tel:
@@ -575,7 +598,7 @@ public class MainActivity extends Activity {
            nothing at all; with one installed it opened that app instead of
            this one. Ask for the action the platform actually defines for a
            number, which every dialer answers, this one included. */
-        if (url.startsWith("tel:")) {
+        if (lower.startsWith("tel:")) {
             try {
                 Intent i = new Intent(Intent.ACTION_DIAL, Uri.parse(url));
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -583,7 +606,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
             return true;
         }
-        if (url.startsWith("sms:") || url.startsWith("smsto:") || url.startsWith("mailto:")) {
+        if (lower.startsWith("sms:") || lower.startsWith("smsto:") || lower.startsWith("mailto:")) {
             try {
                 Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -591,7 +614,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
             return true;
         }
-        return !url.startsWith("file:///android_asset/") && !url.startsWith("about:");
+        return !lower.startsWith("file:///android_asset/") && !lower.startsWith("about:");
     }
 
     @Override
