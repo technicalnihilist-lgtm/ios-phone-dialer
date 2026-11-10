@@ -722,7 +722,13 @@ const ESC_MAP = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
    indexes, so the hot path does the replace and nothing else. String.replace
    with a global regex resets lastIndex itself, so sharing it is safe. */
 const ESC_RE = /[&<>"']/g;
-const esc = v => String(v == null ? "" : v).replace(ESC_RE, c => ESC_MAP[c]);
+/* the arrow function handed to replace() was built again for every value that
+   was escaped — one closure per name, number and subtitle, which on the first
+   render of a 3000-contact book is about nine thousand of them, thrown away
+   again immediately. The replacer is the same function every time; define it
+   once beside the table it indexes. */
+const escRepl = c => ESC_MAP[c];
+const esc = v => String(v == null ? "" : v).replace(ESC_RE, escRepl);
 /* The characters that take up no room at all: a soft hyphen, a zero-width space,
    joiner or non-joiner, the direction marks, a word joiner and a byte order
    mark. A name copied out of a web page, a PDF or a chat carries them, and the
@@ -1173,13 +1179,22 @@ KEYS.forEach(([d, l], n) => {
   pad.appendChild(b);
 });
 
+/* both patterns were literals inside fmt(), and a regex literal is a fresh
+   RegExp object every time it is evaluated: fmt() runs on every keystroke (it
+   formats the number line) and again on every dial, so these two were built and
+   thrown away on the busiest path in the app. Hoisted beside the function that
+   uses them, as ESC_RE and the rest already are. FMT_NON_DIGIT carries /g and is
+   only ever handed to replace(), which resets lastIndex itself; FMT_SYMBOL has
+   no /g and is only ever handed to test(). */
+const FMT_SYMBOL = /[*#+]/;
+const FMT_NON_DIGIT = /\D/g;
 function fmt(v) {
-  const d = v.replace(/\D/g, "");
+  const d = v.replace(FMT_NON_DIGIT, "");
   /* only a leading "+" used to survive: one typed on a keyboard, or inserted by
      holding 0 after a digit, was dropped from the display, so "555+" showed as
      "555" and "555+8+8" as "(555) 88" — the number on screen was not the number
      that got dialled. Any "+" now leaves the value unformatted, like * and #. */
-  if (/[*#+]/.test(v) || d.length > 11) return v;
+  if (FMT_SYMBOL.test(v) || d.length > 11) return v;
   if (d.length > 6) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
   if (d.length > 3) return `(${d.slice(0,3)}) ${d.slice(3)}`;
   return d;
@@ -1232,8 +1247,24 @@ function fmtCached(v) {
    differed by a character nobody can see — and a name that *begins* with one was
    filed under a section header of nothing at all. Strip them from the key; the
    row still draws the name exactly as it is stored. */
-const normSpace = s => String(s == null ? "" : s).replace(INVISIBLE, "")
-  .replace(/\s+/g, " ").trim();
+/* ...and the two replaces below ran for every string that came through here,
+   on the load path: hydrateNative() normalises a contact's number and its name,
+   and buildContactIdx() normalises the name again, so a 3000-contact book paid
+   three global regex passes per contact — eighteen thousand of them — on the
+   main thread before the first list could be drawn. A string with nothing to
+   normalise comes back exactly as it is, and that is nearly every name and
+   every number a device hands over. Only a string that is not plain printable
+   ASCII (a non-breaking space, a tab, an accent, a zero-width character) or one
+   with a leading, trailing or doubled space needs the work, and one test
+   answers all of it. The pattern carries no /g flag, so test() cannot leave a
+   lastIndex behind for the next call to start from. */
+const NEEDS_NORM = /[^\x20-\x7e]|^\s|\s$|\s\s/;
+const normSpace = s => {
+  const t = String(s == null ? "" : s);
+  return t && NEEDS_NORM.test(t)
+    ? t.replace(INVISIBLE, "").replace(/\s+/g, " ").trim()
+    : t;
+};
 
 const NON_ASCII = /[^\x00-\x7f]/;
 /* Every mark NFD leaves behind is not a diacritic: the Arabic harakat and the
@@ -1325,6 +1356,9 @@ function telOf(p) {
    contactGen moves whenever the index is rebuilt, which is the only way people[]
    can change. */
 let matchForValue = null, matchForGen = -1, matchFound = null;
+/* a fresh RegExp for every keystroke and for every tap on the chip and on the
+   call button, for a pattern that never changes. Hoisted, like the others. */
+const USSD_SYMBOL = /[*#]/;
 function findMatch() {
   if (value === matchForValue && contactGen === matchForGen) return matchFound;
   matchForValue = value;
@@ -1334,7 +1368,7 @@ function findMatch() {
      them all the same, so typing *#06# over a contact whose number begins 06 —
      or *1234567# over one saved as 1234567 — drew that person's chip under the
      code, and tapping the chip rang them. No match for a value carrying * or #. */
-  if (/[*#]/.test(value)) return (matchFound = null);
+  if (USSD_SYMBOL.test(value)) return (matchFound = null);
   const d = value.replace(/\D/g, "");
   if (d.length < 3) return (matchFound = null);
   /* A fourth test used to sit here: lowerOf(p).startsWith(value.toLowerCase()).
@@ -1525,8 +1559,13 @@ del.addEventListener("pointerdown", e => {
 ["pointerup","pointerleave","pointercancel"].forEach(e =>
   del.addEventListener(e, () => clearTimeout(hold)));
 
+/* both patterns were literals in code that runs for every key a hardware
+   keyboard sends — the editable-target test and the "is this a keypad key" test
+   — so a pair of RegExp objects was built and dropped per keystroke. Hoisted. */
+const EDITABLE_TAG = /^(input|textarea|select)$/i;
+const KEYPAD_KEY = /^[0-9*#+]$/;
 const isEditable = el => !!el && (el.isContentEditable === true ||
-  /^(input|textarea|select)$/i.test(el.tagName || ""));
+  EDITABLE_TAG.test(el.tagName || ""));
 /* something is floating over the keypad: the Liquid Glass sheet, or the Paste menu */
 /* both were looked up by id on every key a hardware keyboard sends; they are
    the same two elements for the life of the page */
@@ -1550,7 +1589,7 @@ document.addEventListener("keydown", e => {
      fixes, for the rest of the app. A hardware keyboard only types into the
      keypad while the keypad is the view in front of it. */
   if (app.dataset.view !== "keypad") return;
-  if (/^[0-9*#+]$/.test(e.key)) add(e.key);
+  if (KEYPAD_KEY.test(e.key)) add(e.key);
   else if (e.key === "Backspace" && value) { value = value.slice(0, -1); render(); bump(); }
 });
 
@@ -2302,7 +2341,12 @@ function rowMarkup(e) {
    all. "office 2" is a name search and must not list every contact whose number
    holds a 2; "555" is a number search. One rule, asked twice: for the query
    being rendered and for the one before it. */
-const numQuery = r => /^[0-9\s()+\-.,]+$/.test(r) ? r.replace(/[^0-9]/g, "") : "";
+/* asked twice for every keystroke in the search box — once for the query being
+   rendered and once for the one before it — and both patterns were literals
+   inside the arrow function, so two RegExp objects were built per call. */
+const NUM_QUERY = /^[0-9\s()+\-.,]+$/;
+const NUM_DIGITS = /[^0-9]/g;
+const numQuery = r => NUM_QUERY.test(r) ? r.replace(NUM_DIGITS, "") : "";
 function renderContacts(q) {
   /* Trimmed, and with every run of spaces collapsed to one — the same shape the
      index keys are built in. A search box that ends in a space is not a corner
@@ -2482,6 +2526,15 @@ function stamp() {
    call it started could have ended. */
 let lastDial = "", lastDialAt = 0;
 const DIAL_REPEAT_MS = 1200;
+/* Four regex literals sat inside placeCall() and __phoneNumber(): the same
+   "everything that cannot belong to a number" class, the leading-plus strip and
+   the has-a-digit test, rebuilt every time a call is placed or a tel: link is
+   handed over. The junk class is shared by both entry points, which is the one
+   rule they have to agree on anyway. FMT_NON_DIGIT (the digits-only pass, also
+   used by the Recents de-duplication below) is hoisted with fmt(). */
+const DIAL_JUNK = /[^\d+*#]/g;
+const PLUS_ALL = /\+/g;
+const HAS_DIGIT = /[0-9]/;
 
 function placeCall(number, name) {
   const raw = String(number == null ? "" : number);
@@ -2490,18 +2543,18 @@ function placeCall(number, name) {
      cuts a tel: link there for exactly this reason. Here the parameter was
      stripped of its ";" and welded onto the number, so a contact saved as
      "555-1234;89" dialled 555123489, a different subscriber altogether. */
-  const kept = raw.split(";")[0].replace(/[^\d+*#]/g, "");
+  const kept = raw.split(";")[0].replace(DIAL_JUNK, "");
   /* "+" is only a dialling prefix when it comes first. Holding 0 — or pressing
      shift and "=" on a keyboard — in the middle of a number put it there too, and
      the number went to telecom as "tel:555+9": not a dialable number, so the call
      failed with "Could not start the call" while a row for it still went into
      Recents. Keep the leading prefix, drop every other one. */
-  const d = (kept.charAt(0) === "+" ? "+" : "") + kept.replace(/\+/g, "");
+  const d = (kept.charAt(0) === "+" ? "+" : "") + kept.replace(PLUS_ALL, "");
   /* a value made only of "+", "*" or "#" is not a number: holding 0 until it
      inserted "+" and then tapping Call handed "tel:+" to the system dialer and
      left a "+" row in Recents. startCall() already refused this; the path that
      dials on a real device did not. */
-  if (!d || !/[0-9]/.test(d)) return;
+  if (!d || !HAS_DIGIT.test(d)) return;
   const now = Date.now();
   if (d === lastDial && now - lastDialAt < DIAL_REPEAT_MS) return;
   lastDial = d; lastDialAt = now;
@@ -3127,7 +3180,7 @@ function hydrateNative(logOnly) {
          which is what the scan needs. */
       const logged = new Set();
       recents.forEach(r => {
-        const t = r && r.p ? String(r.p.t == null ? "" : r.p.t).replace(/\D/g, "") : "";
+        const t = r && r.p ? String(r.p.t == null ? "" : r.p.t).replace(FMT_NON_DIGIT, "") : "";
         if (t) logged.add(t);
       });
       if (logged.size) {
@@ -3149,7 +3202,7 @@ function hydrateNative(logOnly) {
           }
           return false;
         };
-        dialed = dialed.filter(d => !sameAsLogged(String(d.number).replace(/\D/g, "")));
+        dialed = dialed.filter(d => !sameAsLogged(String(d.number).replace(FMT_NON_DIGIT, "")));
         /* only the in-memory list was trimmed, so storage kept every row the log
            already knew about. They came back — with their old times, at the top —
            as soon as the log rolled past them. Write the trimmed list back. */
@@ -3220,7 +3273,7 @@ window.__phoneNumber = function (n) {
   try { text = decodeURIComponent(text); } catch (e) { }
   /* "tel:123;ext=6" — the part after the semicolon is not the number, and its
      digits would otherwise end up on the end of it */
-  const clean = text.split(";")[0].replace(/[^\d+*#]/g, "").slice(0, 20);
+  const clean = text.split(";")[0].replace(DIAL_JUNK, "").slice(0, 20);
   if (!clean) return;
   value = clean;
   /* the number is only useful on the keypad, so that is the page it opens on */
