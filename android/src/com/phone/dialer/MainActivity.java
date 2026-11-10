@@ -95,6 +95,13 @@ public class MainActivity extends Activity {
     /** Digits kept from a stored number when building the de-duplication key. */
     private static final Pattern NON_DIAL = Pattern.compile("[^0-9+]");
 
+    /**
+     * The one page this app shows. It is packaged from index.html at the
+     * repository root by android/build.sh, which also fails the build when the
+     * copy inside the APK is not byte for byte that file.
+     */
+    private static final String ASSET_PAGE = "file:///android_asset/index.html";
+
     private WebView web;
 
     /**
@@ -288,11 +295,31 @@ public class MainActivity extends Activity {
                 }
             });
 
+            /* The page itself. Everything above builds a WebView, configures
+               it, hands it the JavaScript bridge and its client — and nothing
+               ever put the bundled page into it. assets/index.html was
+               packaged into every APK and never opened, so the app came up as
+               an empty black window: no keypad, no lists, no clock, and a
+               bridge that the page never got the chance to call. The document
+               lives inside the APK, so file:///android_asset/ is the only URL
+               that can reach it.
+               Assigned to `web` before the load, so onPageFinished()'s "is
+               this still the view on screen" test answers for this one and the
+               pending dial/hydrate are delivered; and assigned inside the try,
+               so a load that throws leaves `ok` false and the view is torn
+               down instead of being leaked with a bridge holding this
+               Activity. */
             web = w;
+            w.loadUrl(ASSET_PAGE);
             ok = true;
             return w;
         } finally {
-            if (!ok) destroyWebView(w);
+            if (!ok) {
+                /* the view never became the page: do not leave the field
+                   pointing at one that is about to be destroyed */
+                web = null;
+                destroyWebView(w);
+            }
         }
     }
 
