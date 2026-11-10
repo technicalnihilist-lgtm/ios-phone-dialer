@@ -1573,14 +1573,21 @@ dialtop.addEventListener("pointermove", e => {
 });
 
 function openMenu(x, y) {
-  const menu = $("menu"), r = $("device").getBoundingClientRect();
+  /* the Paste menu is one static element, and it is already held in
+     overlayMenu — the same handle overlayOpen() reads on every hardware key.
+     Looking it up by id again here, and again in closeMenu() below, was two
+     fresh document lookups for an element the page resolved once at load. */
+  const menu = overlayMenu, r = $("device").getBoundingClientRect();
   menu.classList.add("show");
   const w = menu.offsetWidth;   /* only the width is needed; the height read was unused and forced a layout */
   menu.style.left = Math.max(8, Math.min(x - r.left - w / 2, r.width - w - 8)) + "px";
   menu.style.top = Math.max(8, y - r.top + 10) + "px";
   buzz(6);
 }
-function closeMenu() { $("menu").classList.remove("show"); }
+/* closeMenu() runs from the capture-phase pointerdown below, which fires for
+   every tap anywhere in the app — so that getElementById("menu") was a lookup
+   on every single tap, for an element already resolved into overlayMenu. */
+function closeMenu() { if (overlayMenu) overlayMenu.classList.remove("show"); }
 document.addEventListener("pointerdown", e => {
   if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
 }, true);
@@ -1594,6 +1601,13 @@ document.addEventListener("pointerdown", e => {
    characters that can belong to a number, and only when that run actually holds
    three digits or more; everything else in the clip is prose. */
 const DIAL_RUN = /[0-9+*#().\-\s]+/g;
+/* The characters that cannot belong to a number, stripped from a run before its
+   digits are counted. Written as a literal inside firstDialRun()'s scan loop, so
+   a fresh RegExp object was built for every run the loop looked at — on a clip
+   of prose that is one allocation per word. Hoisted beside the pattern it
+   cleans. String.replace with a global regex resets lastIndex itself, so
+   sharing it is safe, exactly as ESC_RE is. */
+const RUN_JUNK = /[^\d+*#]/g;
 /* Every character a text can break a line or a field on. \s matches all of
    them, so a run that spans one is two numbers welded together; dialable()
    cuts the clip on this before it looks for a number. No `g` flag: test() and
@@ -1605,7 +1619,7 @@ function firstDialRun(s) {
   DIAL_RUN.lastIndex = 0;
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
-    const run = m[0].replace(/[^\d+*#]/g, "");
+    const run = m[0].replace(RUN_JUNK, "");
     let digits = 0;
     for (let i = 0; i < run.length; i++) {
       const c = run.charCodeAt(i);
@@ -1616,7 +1630,21 @@ function firstDialRun(s) {
   return "";
 }
 function dialable(txt) {
-  const s = String(txt == null ? "" : txt);
+  /* The clipboard is the one place this page is handed text it did not build,
+     and a number copied off a web page or out of a chat very often arrives as
+     the tel: URI the link was written with — percent-encoded, "*" as %2A and
+     "#" as %23. Nothing on this path decoded those escapes, so the run that was
+     read as the number was built out of the escape's own digits: a clip holding
+     "tel:%2A123%23" — a USSD code copied from a message — reached the keypad as
+     "123", an ordinary number that dials a stranger, and "tel:%2B919876543210"
+     lost its country-code "+" the same way. __phoneNumber() already decodes for
+     exactly this reason on the tel:-link path; the Paste menu is the other
+     entry point for a URI from outside the app, so decode here too. A malformed
+     escape is not a character — decodeURIComponent() throws on one — so the
+     text is then kept exactly as it arrived, which is what Uri.decode() does on
+     the other side. */
+  let s = String(txt == null ? "" : txt);
+  try { s = decodeURIComponent(s); } catch (e) { }
   /* A clip holding one number per line — a list copied out of a note, a chat or
      a spreadsheet column — was read as a single run, because \s matches a line
      break too: "555-1234\n987-6543" arrived on the keypad as 55512349876543,
@@ -3052,14 +3080,16 @@ function hydrateNative(logOnly) {
        recency, so a local call whose number is in the log is in the log), so
        the local copy goes. */
     if (recents.length) {
+      /* The digits of every logged number, deduplicated. This used to be a Set
+         *and* an array, both filled by the same loop and holding the same
+         strings, because the suffix scan below walked the array: the whole list
+         of logged numbers was allocated twice on every call-log refresh, and the
+         copy bought nothing — a Set is iterable in the same order it was filled,
+         which is what the scan needs. */
       const logged = new Set();
-      /* the log keeps a number the way the contact saved it, so the exact string
-         alone is not enough to decide "the log already has this call" — see
-         sameAsLogged() below */
-      const loggedDig = [];
       recents.forEach(r => {
         const t = r && r.p ? String(r.p.t == null ? "" : r.p.t).replace(/\D/g, "") : "";
-        if (t) { logged.add(t); loggedDig.push(t); }
+        if (t) logged.add(t);
       });
       if (logged.size) {
         const before = dialed.length;
@@ -3075,8 +3105,7 @@ function hydrateNative(logOnly) {
           if (!n) return false;
           if (logged.has(n)) return true;
           if (n.length < 7) return false;
-          for (let i = 0; i < loggedDig.length; i++) {
-            const t = loggedDig[i];
+          for (const t of logged) {
             if (t.length >= 7 && (t.endsWith(n) || n.endsWith(t))) return true;
           }
           return false;
