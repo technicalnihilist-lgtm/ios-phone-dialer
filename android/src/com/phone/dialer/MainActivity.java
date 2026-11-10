@@ -373,17 +373,28 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
-    /** Tears a WebView down without leaving its renderer, bridge or parent behind. */
+    /**
+     * Tears a WebView down without leaving its renderer, bridge or parent behind.
+     *
+     * Every step is guarded on its own. One try around the whole sequence meant a
+     * throw from any step skipped all the ones after it — including destroy(),
+     * which is the only thing that releases the renderer — so the failure this
+     * method exists to clean up after (a renderer that has already gone, a view
+     * the framework has torn down under us) was also the one that left the
+     * renderer, the JavaScript bridge holding this Activity, and the dead view in
+     * its parent behind for good. A step that throws cannot stop the next one now,
+     * and destroy() always runs.
+     */
     private void destroyWebView(WebView w) {
         if (w == null) return;
+        try { w.stopLoading(); } catch (Exception ignored) { }
+        try { w.removeJavascriptInterface("PhoneNative"); } catch (Exception ignored) { }
+        try { w.setWebViewClient(null); } catch (Exception ignored) { }
         try {
-            w.stopLoading();
-            w.removeJavascriptInterface("PhoneNative");
-            w.setWebViewClient(null);
             ViewParent parent = w.getParent();
             if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(w);
-            w.destroy();
         } catch (Exception ignored) { }
+        try { w.destroy(); } catch (Exception ignored) { }
     }
 
     private void askPermissions() {

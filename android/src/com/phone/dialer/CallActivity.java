@@ -34,6 +34,8 @@ public class CallActivity extends Activity {
     private ImageView muteBtn, speakerBtn, holdBtn, recordBtn;
     private TextView muteLabel, speakerLabel, holdLabel, recordLabel;
     private View keypadPanel;
+    /** The keypad button, kept so its description can follow the panel. */
+    private ImageView keypadBtn;
 
     private AudioManager audio;
     private MediaRecorder recorder;
@@ -189,7 +191,7 @@ public class CallActivity extends Activity {
                     a.onHold = false;
                     a.clearMuteOnService();
                     a.muted = false;
-                    if (a.keypadPanel != null) a.keypadPanel.setVisibility(View.GONE);
+                    a.setKeypadOpen(false);
                     if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
                     /* ...and the description, which is what a screen reader
                        reads instead of the label. onNewIntent() resets both
@@ -263,6 +265,11 @@ public class CallActivity extends Activity {
         nameView = findViewById(R.id.call_name);
         statusView = findViewById(R.id.call_status);
         keypadPanel = findViewById(R.id.keypad_panel);
+        /* resolved here, with the rest, and not with its click listener below:
+           the two blocks further down that restore an open keypad from the
+           intent or from the saved state run before that listener is wired,
+           and they move the button's description through setKeypadOpen() */
+        keypadBtn = findViewById(R.id.btn_keypad);
 
         muteBtn = findViewById(R.id.btn_mute);
         speakerBtn = findViewById(R.id.btn_speaker);
@@ -305,9 +312,8 @@ public class CallActivity extends Activity {
            answers that question when there is no saved state to ask. */
         try {
             if (state == null && getIntent() != null
-                    && getIntent().getBooleanExtra(EXTRA_KEYPAD, false)
-                    && keypadPanel != null) {
-                keypadPanel.setVisibility(View.VISIBLE);
+                    && getIntent().getBooleanExtra(EXTRA_KEYPAD, false)) {
+                setKeypadOpen(true);
             }
         } catch (Exception ignored) { }
 
@@ -321,8 +327,8 @@ public class CallActivity extends Activity {
            a keypad the user had open on a live call came back closed, with the
            tone they were about to send hidden behind the keypad button. */
         try {
-            if (state != null && state.getBoolean(STATE_KEYPAD, false) && keypadPanel != null) {
-                keypadPanel.setVisibility(View.VISIBLE);
+            if (state != null && state.getBoolean(STATE_KEYPAD, false)) {
+                setKeypadOpen(true);
             }
         } catch (Exception ignored) { }
 
@@ -341,10 +347,9 @@ public class CallActivity extends Activity {
         findViewById(R.id.btn_end).setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { endCall(); }
         });
-        findViewById(R.id.btn_keypad).setOnClickListener(new View.OnClickListener() {
+        keypadBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                keypadPanel.setVisibility(keypadPanel.getVisibility() == View.VISIBLE
-                        ? View.GONE : View.VISIBLE);
+                setKeypadOpen(keypadPanel == null || keypadPanel.getVisibility() != View.VISIBLE);
             }
         });
         findViewById(R.id.btn_addcall).setOnClickListener(new View.OnClickListener() {
@@ -471,8 +476,8 @@ public class CallActivity extends Activity {
            keypad — so running it for a resume would undo the state of the call
            that is still on it. */
         if (intent != null && intent.getBooleanExtra(EXTRA_RESUME, false)) {
-            if (intent.getBooleanExtra(EXTRA_KEYPAD, false) && keypadPanel != null) {
-                keypadPanel.setVisibility(View.VISIBLE);
+            if (intent.getBooleanExtra(EXTRA_KEYPAD, false)) {
+                setKeypadOpen(true);
             }
             /* A resume intent names the call the system wants on screen. It was
                only ever used to reopen the keypad, so when the screen had been
@@ -500,7 +505,7 @@ public class CallActivity extends Activity {
         /* the DTMF keypad belongs to the call that was on screen: left open it
            was already showing for a brand-new call, the same state leak the
            mute, hold and recording state above are reset for */
-        if (keypadPanel != null) keypadPanel.setVisibility(View.GONE);
+        setKeypadOpen(false);
         /* a recording started on the previous call kept running, and its button
            still said "stop" over the new caller's name. Tearing it down inline
            meant stop() finalising the MP4 and release() shutting the encoder
@@ -602,6 +607,22 @@ public class CallActivity extends Activity {
         }
         holdAskedAt = System.currentTimeMillis();
         setHoldUi(next);
+    }
+
+    /**
+     * Opens or closes the DTMF keypad panel, and moves the button's description
+     * with it. Every other control on this screen rewrites its description when
+     * its state changes — "mute"/"unmute", "hold"/"resume", "record"/"stop
+     * recording", "speaker"/"speaker on" — and this one did not: it went on
+     * saying "keypad" whether the panel was open or closed, so a screen reader
+     * could not tell which of the two the button would do. It is also the one
+     * piece of this screen's state that a recreation, a resume intent and a
+     * fallback to another call each have to restore, so the visibility and the
+     * description are set here, once, and the six callers cannot disagree.
+     */
+    private void setKeypadOpen(boolean open) {
+        if (keypadPanel != null) keypadPanel.setVisibility(open ? View.VISIBLE : View.GONE);
+        setDesc(keypadBtn, open ? "keypad on" : "keypad");
     }
 
     /** Paints the hold control; shared by the tap and the 1 Hz sync below. */

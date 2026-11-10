@@ -1594,6 +1594,12 @@ document.addEventListener("pointerdown", e => {
    characters that can belong to a number, and only when that run actually holds
    three digits or more; everything else in the clip is prose. */
 const DIAL_RUN = /[0-9+*#().\-\s]+/g;
+/* Every character a text can break a line or a field on. \s matches all of
+   them, so a run that spans one is two numbers welded together; dialable()
+   cuts the clip on this before it looks for a number. No `g` flag: test() and
+   split() are both called with it, and a global pattern would carry lastIndex
+   from one call into the next. */
+const SEP_RE = /\r\n|[\r\n\t\v\f\u0085\u2028\u2029]/;
 /* The first run in one line of text that holds three digits or more. */
 function firstDialRun(s) {
   DIAL_RUN.lastIndex = 0;
@@ -1623,8 +1629,18 @@ function dialable(txt) {
      \s matches a tab, so the two numbers were read as one fourteen-digit run
      and dialled as a single stranger's number. The comma and the line break
      were already treated as ends; treat the tab as one too. */
-  if (s.indexOf("\n") < 0 && s.indexOf("\r") < 0 && s.indexOf("\t") < 0) return firstDialRun(s);
-  const lines = s.split(/\r\n|\r|\n|\t/);
+  /* ...but the three separators that test named are not the only ones a line
+     arrives with, and \s matches every one of them. A clip whose lines are
+     broken by a vertical tab or a form feed (what a PDF-to-text extraction
+     writes), by NEL (U+0085), or by the Unicode line and paragraph separators
+     U+2028 and U+2029 — which some editors, JSON dumps and chat exports write
+     where a plain line break would go — had that separator read as part of the
+     number: the two numbers either side of it were welded into one run and
+     dialled as a single stranger's number, which is exactly the defect the
+     tab above was fixed for, one character at a time. Ask one pattern for
+     every line and field separator there is, so none can be missed again. */
+  if (!SEP_RE.test(s)) return firstDialRun(s);
+  const lines = s.split(SEP_RE);
   for (let i = 0; i < lines.length; i++) {
     const run = firstDialRun(lines[i]);
     if (run) return run;

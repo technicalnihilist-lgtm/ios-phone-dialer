@@ -2,4 +2,12 @@ build/
 *.keystore
 hs_err_pid*.log
 alpha.apk
-Phone-Dialer.apk
+# android/build.sh writes its APK next to itself, so the rule has to be anchored
+# there. A bare "Phone-Dialer.apk" matched the filename in every directory,
+# including apk/, where the published, installable build is kept and tracked.
+# Git only consults this file for untracked paths, so the tracked
+# apk/Phone-Dialer.apk survived — but the next time a run replaced it, a plain
+# `git add apk/Phone-Dialer.apk` would have been refused without -f, and the
+# repository would have gone on shipping the previous build's APK under a new
+# version number with nothing to show that it had gone wrong.
+/android/Phone-Dialer.apk
