@@ -2137,7 +2137,20 @@ function renderFavs() {
       const p = people[i];
       /* a name the device saved with a leading space ("  Ravi Kumar") split into
          an empty first chunk, so the tile was drawn with no name at all */
-      const first = String(p.n == null ? "" : p.n).trim().split(/\s+/)[0] || "";
+      /* ...and trim() is not the test the rest of this page uses for "blank": it
+         does not remove a character with no shape, so a name saved as
+         "\u200b Ravi Kumar" — a zero-width space, then a space, which is what a
+         name copied out of a web page or a chat arrives as — kept "\u200b" as its
+         first word. The tile then drew the avatar (initials() strips the
+         invisible run, so it read "R") over a name line with nothing on it,
+         while the same person's row in Contacts read "Ravi Kumar". Take the
+         first word that actually has a character to draw; every ordinary name
+         answers on its first word, exactly as it did before. */
+      const words = String(p.n == null ? "" : p.n).split(/\s+/);
+      let first = "";
+      for (let w = 0; w < words.length; w++) {
+        if (normSpace(words[w])) { first = words[w]; break; }
+      }
       return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(first)}</b><small>mobile</small></button>`;
     }).join("");
   }
