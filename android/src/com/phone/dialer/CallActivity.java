@@ -947,7 +947,18 @@ public class CallActivity extends Activity {
                     android.net.Uri.encode(number));
             c = getContentResolver().query(uri,
                     new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME}, null, null, null);
-            if (c != null && c.moveToFirst()) return c.getString(0);
+            if (c != null && c.moveToFirst()) {
+                String found = c.getString(0);
+                /* A row whose display name is null or blank is not a name. It
+                   was handed back all the same, and the caller paints whatever
+                   it gets: the header of a live call then went blank — no name
+                   and no number, so the caller could not be identified at all —
+                   while the same contact's row in the list falls back to its
+                   number (the bridge does exactly that for a blank
+                   CACHED_NAME). Answer "no name" instead, which is what the
+                   caller already does when the lookup finds nobody. */
+                if (found != null && !found.trim().isEmpty()) return found;
+            }
         } catch (Exception ignored) {
         } finally {
             if (c != null) c.close();

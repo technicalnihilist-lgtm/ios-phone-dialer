@@ -755,8 +755,47 @@ const esc = v => String(v == null ? "" : v).replace(ESC_RE, escRepl);
    conjunct — so a key built from the name may drop them and the section header
    drawn from it may not. fold() removes those two; this table is only the
    characters that mean nothing at all. */
-const INVISIBLE = /[\u00ad\u061c\u180e\u200b\u200e\u200f\u2060\u2066\u2067\u2068\u2069\ufeff]/g;
+/* ...but the twelve above are a handful of the characters Unicode gives the
+   property Default_Ignorable_Code_Point, and every one of the rest was still
+   read as a character with a shape. The four isolates (U+2066..U+2069) were
+   added here for a vCard that pins the direction of an Arabic or Hebrew name;
+   the older spelling of the same thing is the embedding and override controls
+   U+202A..U+202E, which is what an app written before Unicode 6.3 still writes,
+   and they were not. A name stored as U+202B + the name + U+202C therefore
+   began with a character with no shape: the avatar drew a blank circle, the
+   section header above the row was an empty strip with a row under it, and the
+   search key carried the two bytes, so the name could not be found by typing
+   it either.
+   The same fault, in the same table, for the rest of the set: the two Hangul
+   fillers (U+115F, U+1160 — the first is an L jamo, so the cluster walk below
+   took it for a real letter), the Hangul filler of the compatibility block
+   (U+3164) and its halfwidth twin (U+FFA0), the reserved U+FFF0..U+FFF8, and
+   the invisible operators and deprecated format characters beside the word
+   joiner (U+2060..U+206F). The C0 and C1 controls are here too: a name copied
+   out of a corrupt vCard or a half-written sync can carry one, and U+0001 is
+   neither punctuation nor a letter, so it became the avatar's initial and the
+   section header above the row.
+   Deliberately left out: U+0009..U+000D and U+0085, which are whitespace —
+   normSpace() collapses a run of them to one space, and stripping them instead
+   would weld "Ravi" and "Kumar" into one word — and U+180B..U+180D, which are
+   marks that belong to the glyph in front of them. */
+const INVISIBLE = /[\u0000-\u0008\u000e-\u001f\u007f-\u0084\u0086-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff0-\ufff8]/g;
 const JOINERS = /[\u200c\u200d]/g;
+/* The astral half of the same set — the tag block, the shorthand format
+   characters and the musical symbol format controls. A character class cannot
+   hold a surrogate pair without the `u` flag, and the WebView this page has to
+   parse on (the Chrome 51 one an Android 7 phone shipped with) has no `u` flag,
+   so these are answered by a range test instead. firstCodePoint() is the only
+   reader: a name cannot begin with one of them, and one that did would draw
+   nothing at all. */
+const noGlyph = cp => cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)
+  || (cp >= 0x1bca0 && cp <= 0x1bca3) || (cp >= 0x1d173 && cp <= 0x1d17a)
+  || (cp >= 0xe0000 && cp <= 0xe0fff);
+/* The same set as INVISIBLE, without the /g flag, for the one caller that asks
+   about a single character instead of replacing a run of them: a global pattern
+   carries lastIndex from one test() to the next, so the two cannot share an
+   object. Built from INVISIBLE's own source, so the two can never drift apart. */
+const INVISIBLE_ONE = new RegExp(INVISIBLE.source);
 const AV_FALLBACK = ["#8e8e93", "#636366"];
 /* w[0] is a UTF-16 code unit, not a character. A name that starts with an emoji
    — or any glyph outside the basic plane — was cut in half and drawn as a
@@ -1000,8 +1039,16 @@ const firstCodePoint = s => {
     const cp = s.codePointAt(start);
     if (cp === undefined) return "";
     /* L (leading) jamo is a valid start; V and T are not */
+    /* ...and a character with no glyph at all is not a start either: the C0 and
+       C1 controls, and the astral half of the Default_Ignorable set that
+       INVISIBLE cannot name. U+0001 is neither punctuation nor a letter, so it
+       was taken for the initial and the avatar drew nothing while the section
+       header above the row was an empty strip — the same defect the leading
+       invisible run below this test was written for, on the characters the
+       table above cannot hold. */
     if (cp === 0x200c || cp === 0x200d || cp === 0x20 || isPunct(cp)
-        || isExtend(cp) || hangulOf(cp) > 1) {
+        || isExtend(cp) || hangulOf(cp) > 1 || noGlyph(cp)
+        || INVISIBLE_ONE.test(s.charAt(start))) {
       start += cp > 0xffff ? 2 : 1;
       continue;
     }
@@ -2895,7 +2942,9 @@ function endCall() {
     const b = csBtns[i];
     if (!b.classList.contains("on")) continue;
     b.classList.remove("on");
-    b.setAttribute("aria-pressed", "false");   /* the state above was cleared */
+    /* only the three toggles carry the state — writing it onto the one-shot
+       buttons here would put back the attribute the block above leaves off */
+    if (isToggle(b)) b.setAttribute("aria-pressed", "false");
   }
   cs.classList.remove("show");
   device.classList.remove("calling");
@@ -2904,14 +2953,22 @@ function endCall() {
   behindCall(false);
 }
 $("csEnd").addEventListener("click", endCall);
+/* Three of the six controls are toggles — mute, keypad and the audio route
+   switch on and off — and told a screen reader nothing at all about it; the
+   All/Missed control already exposes its state this way, so those three do
+   too. The other three (add call, FaceTime, contacts) are one-shot actions
+   with no on/off state of their own, and they were given aria-pressed as well:
+   a screen reader then announced "add call, button, not pressed" for a button
+   that can never be pressed, which is a state it does not have. Mark only the
+   three that have one. */
+const isToggle = b => b.dataset.act === "mute" || b.dataset.act === "keypad"
+  || b.dataset.act === "audio";
 csBtns.forEach(b => {
-  /* these six controls change state on screen (mute on, keypad open) and told a
-     screen reader nothing at all; the All/Missed control already exposes its
-     state this way, so the call sheet's controls now do too */
-  b.setAttribute("aria-pressed", "false");
+  const toggle = isToggle(b);
+  if (toggle) b.setAttribute("aria-pressed", "false");
   b.addEventListener("click", () => {
     b.classList.toggle("on");
-    b.setAttribute("aria-pressed", b.classList.contains("on") ? "true" : "false");
+    if (toggle) b.setAttribute("aria-pressed", b.classList.contains("on") ? "true" : "false");
   });
 });
 $("call").addEventListener("click", () => {
@@ -3435,7 +3492,20 @@ function hydrateNative(logOnly) {
           if (logged.has(n)) return true;
           if (n.length < 7) return false;
           for (const t of logged) {
-            if (t.length >= 7 && (t.endsWith(n) || n.endsWith(t))) return true;
+            if (t.length < 7) continue;
+            /* Only a country code may sit in front of the shorter number: one
+               to three digits, which is the same rule the keypad's contact
+               match already applies for exactly this reason. Any longer prefix
+               is a different subscriber that merely ends the same way, and
+               taking it for the same call deleted the row for a call that was
+               really placed — "555-1234" dialled here went when the device log
+               held a call to "+91 98765 551234" — from the list and, because
+               the trimmed list is written back, from storage as well, so the
+               row never came back. */
+            const longer = t.length > n.length ? t : n;
+            const shorter = t.length > n.length ? n : t;
+            if (longer.length - shorter.length > 3) continue;
+            if (longer.endsWith(shorter)) return true;
           }
           return false;
         };
