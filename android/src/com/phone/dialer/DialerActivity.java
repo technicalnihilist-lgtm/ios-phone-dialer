@@ -28,8 +28,21 @@ public class DialerActivity extends Activity {
            tear the task down under the activity that was just launched */
         try {
             Intent out = new Intent(this, MainActivity.class);
+            /* REORDER_TO_FRONT, not CLEAR_TOP. CLEAR_TOP reuses the running
+               MainActivity by closing every activity above it in the task — and
+               the one activity that can be above it is CallActivity, the in-call
+               screen. So tapping a number in a message, a browser or a contact
+               card *during a call* tore that screen down: the call stayed up,
+               but this app is excludeFromRecents and posts no ongoing-call
+               notification, so its mute, speaker, hold, keypad and hang-up were
+               gone and the call could only be ended from the other side. The
+               screen also has no way back of its own — only telecom's "return to
+               call", which this app's InCallService now answers. Bring the
+               dialer to the front of the task instead and leave what is under it
+               alive: the number still arrives through onNewIntent(), and when
+               the call ends finishIfOpen() closes the in-call screen as usual. */
             out.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                     | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             if (number != null && !number.isEmpty()) out.putExtra(EXTRA_DIAL, number);
             startActivity(out);

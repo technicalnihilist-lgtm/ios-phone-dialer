@@ -24,6 +24,7 @@ import android.view.ViewParent;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.ValueCallback;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -112,6 +113,15 @@ public class MainActivity extends Activity {
     private String pendingDial;
     /** Whether the asset page has finished loading, so evaluateJavascript lands. */
     private boolean pageReady;
+
+    /**
+     * Whether the page is holding a panel of its own open — the Liquid Glass
+     * sheet or the Paste menu — and so has a step Back should take before this
+     * activity is the one that handles it. Written from the page's own thread
+     * (the JavaScript bridge runs off the UI thread) and read in onBackPressed(),
+     * so it is volatile.
+     */
+    private volatile boolean pageModal;
 
     /**
      * A full re-read of contacts and the call log that is owed to the page but
@@ -243,6 +253,8 @@ public class MainActivity extends Activity {
                     super.onPageFinished(view, url);
                     if (view != web) return;
                     pageReady = true;
+                    /* a page that has just loaded holds nothing open */
+                    pageModal = false;
                     deliverPendingDial();
                     deliverPendingHydrate();
                 }
@@ -664,6 +676,20 @@ public class MainActivity extends Activity {
            ever writes such a link, which is why it never showed; the check is
            the only thing standing between a link and the app's own files, so
            make it mean what it says — the asset root, and no way out of it. */
+        /* ...but a literal ".." between literal slashes is not the only way to
+           write "two levels up", and the URL parser resolves the path before
+           anything is loaded: it reads "%2e%2e" as a double-dot segment just
+           like ".." (WHATWG URL, "double-dot path segment"), and in a file:
+           URL a backslash is a path separator too, so "..\.." is the same
+           thing again. The test below therefore only caught the spelling it
+           was written with: "file:///android_asset/%2e%2e/%2e%2e/data/data/
+           com.phone.dialer/files/x" began with the asset root, held no literal
+           ".." between two "/" characters, and was resolved — by the very
+           parser the WebView hands the string to — to a file in the app's
+           private storage. Split the path the way that parser splits it (on
+           "/" and on "\"), decode each segment on its own — a "%2f" inside a
+           name is not a separator for the parser either, so it stays inside
+           the segment here — and refuse the segment that comes out as "..". */
         if (!lower.startsWith("about:")) {
             if (!lower.startsWith("file:///android_asset/")) return true;
             String path = lower.substring("file:///android_asset/".length());
@@ -671,15 +697,55 @@ public class MainActivity extends Activity {
             if (q >= 0) path = path.substring(0, q);
             int f = path.indexOf('#');
             if (f >= 0) path = path.substring(0, f);
-            for (String seg : path.split("/")) {
-                if (seg.equals("..")) return true;   /* not the bundled page: refuse */
+            for (String seg : path.split("[/\\\\]")) {
+                String part = seg;
+                try {
+                    String decoded = Uri.decode(part);
+                    if (decoded != null) part = decoded;
+                } catch (Exception ignored) {
+                    /* a malformed escape is not a character: judge the segment
+                       exactly as it arrived, which is what the parser keeps */
+                }
+                if (part.equals("..")) return true;   /* not the bundled page: refuse */
             }
         }
         return false;
     }
 
+    /**
+     * Back is the system's "go back one step", and this activity used to be the
+     * only thing that ever answered it: the bundled page holds no history to
+     * walk, so Back closed the whole app from every state. With the settings
+     * sheet open — or the Paste menu — the panel and any half-typed number on
+     * the keypad went with it, and the app had to be reopened and the number
+     * retyped. Ask the page first: it closes whatever it was holding and answers
+     * "true"; when it was holding nothing it answers "false" and the press is
+     * handled here exactly as it always was.
+     */
     @Override
     public void onBackPressed() {
+        if (pageModal && web != null && pageReady) {
+            try {
+                web.evaluateJavascript("window.__phoneBack?window.__phoneBack():false",
+                        new ValueCallback<String>() {
+                            @Override
+                            public void onReceiveValue(String used) {
+                                /* the page had nothing open after all: Back is ours */
+                                if (!"true".equals(used)) backOut();
+                            }
+                        });
+                return;
+            } catch (Exception e) {
+                /* the renderer went away between the check and the call: fall
+                   through and handle the press here, which is what Back would
+                   have done anyway */
+            }
+        }
+        backOut();
+    }
+
+    /** What Back does when the page is not holding anything open. */
+    private void backOut() {
         if (web != null && web.canGoBack()) web.goBack();
         else super.onBackPressed();
     }
@@ -882,6 +948,17 @@ public class MainActivity extends Activity {
          * threw, and did nothing at all inside the app. Read it here instead;
          * the page only calls this from the tap that opened the menu.
          */
+        /**
+         * Whether the page has a panel of its own open. It tells us on every
+         * change, and onBackPressed() asks the page to close it before the press
+         * is allowed to close the app. Nothing is drawn from this, so it is a
+         * state flag and not a call back into the page.
+         */
+        @JavascriptInterface
+        public void setModal(final boolean open) {
+            pageModal = open;
+        }
+
         @JavascriptInterface
         public String clipboard() {
             try {

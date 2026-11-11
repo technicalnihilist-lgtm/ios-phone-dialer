@@ -1659,6 +1659,25 @@ const isEditable = el => !!el && (el.isContentEditable === true ||
 const overlaySheet = $("gsheet"), overlayMenu = $("menu");
 const overlayOpen = () => !!((overlaySheet && overlaySheet.classList.contains("show")) ||
                               (overlayMenu && overlayMenu.classList.contains("show")));
+/* Android's Back button is the system's "go back one step", and this page had no
+   way to answer it: the WebView holds no history to walk, so Back closed the
+   whole app from every state. With the Liquid Glass sheet open — or the Paste
+   menu — the panel, its sliders and any half-typed number on the keypad went
+   with it, and the app had to be reopened and the number retyped. Tell the
+   shell whether there is a step to take, and take it when it asks. The sheet's
+   own open()/close() lives in the settings block far below, so its closer is
+   assigned to a binding declared here rather than called from here. */
+let glassBack = null;
+function tellModal() {
+  /* the browser build has no shell to tell */
+  if (!window.PhoneNative || !PhoneNative.setModal) return;
+  try { PhoneNative.setModal(overlayOpen()); } catch (e) { }
+}
+window.__phoneBack = function () {
+  if (overlayMenu && overlayMenu.classList.contains("show")) { closeMenu(); return true; }
+  if (overlaySheet && overlaySheet.classList.contains("show") && glassBack) { glassBack(); return true; }
+  return false;
+};
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { closeMenu(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1727,6 +1746,7 @@ function openMenu(x, y) {
      fresh document lookups for an element the page resolved once at load. */
   const menu = overlayMenu, r = deviceEl.getBoundingClientRect();
   menu.classList.add("show");
+  tellModal();
   const w = menu.offsetWidth;   /* only the width is needed; the height read was unused and forced a layout */
   menu.style.left = Math.max(8, Math.min(x - r.left - w / 2, r.width - w - 8)) + "px";
   menu.style.top = Math.max(8, y - r.top + 10) + "px";
@@ -1735,7 +1755,14 @@ function openMenu(x, y) {
 /* closeMenu() runs from the capture-phase pointerdown below, which fires for
    every tap anywhere in the app — so that getElementById("menu") was a lookup
    on every single tap, for an element already resolved into overlayMenu. */
-function closeMenu() { if (overlayMenu) overlayMenu.classList.remove("show"); }
+function closeMenu() {
+  /* only when it was actually showing: this runs on every tap in the app, and
+     the shell is told about a state change, not about a tap */
+  if (overlayMenu && overlayMenu.classList.contains("show")) {
+    overlayMenu.classList.remove("show");
+    tellModal();
+  }
+}
 document.addEventListener("pointerdown", e => {
   if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
 }, true);
@@ -3179,8 +3206,10 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
        see. inert takes the closed sheet out of both, on the engines that have
        it; the stylesheet's pointer-events covers the rest. */
     try { sheet.inert = !on; } catch (e) { }
-    if (on !== was) buzz(6);
+    if (on !== was) { buzz(6); tellModal(); }
   }
+  /* the shell's Back button closes this sheet through here — see __phoneBack */
+  glassBack = function () { open(false); };
   /* the sheet starts closed, and open() is only ever reached from a tap: mark
      it inert now so the state holds from the first frame */
   try { sheet.inert = true; } catch (e) { }

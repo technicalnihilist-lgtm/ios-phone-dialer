@@ -154,8 +154,18 @@ public class DialerInCallService extends InCallService {
         String number = numberOf(call);
 
         Intent i = new Intent(this, CallActivity.class);
+        /* REORDER_TO_FRONT, not CLEAR_TOP, for the same reason the trampoline
+           uses it: CLEAR_TOP reuses the running in-call screen by closing every
+           activity above it — and the activity above it can be the dialer. A
+           number tapped in a message during a call brings MainActivity to the
+           front (see DialerActivity), and the next call to arrive then cleared
+           it off the stack: the WebView, its lists and any half-typed number
+           went with it and had to be read again from scratch. Bring the call
+           screen to the front and leave what is under it alone; onNewIntent()
+           still gets the new caller, and the call screen keeps its own state
+           (mute, hold, keypad) across the reorder. */
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                 | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         i.putExtra("number", number);
         try {

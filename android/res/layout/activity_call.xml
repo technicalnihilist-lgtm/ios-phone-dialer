@@ -101,6 +101,7 @@
                     android:id="@+id/btn_mute"
                     style="@style/CallIcon"
                     android:contentDescription="mute"
+                    android:focusable="true"
                     android:src="@drawable/ic_mute" />
                 <TextView
                     android:id="@+id/lbl_mute"
@@ -114,6 +115,7 @@
                     android:id="@+id/btn_keypad"
                     style="@style/CallIcon"
                     android:contentDescription="keypad"
+                    android:focusable="true"
                     android:src="@drawable/ic_keypad" />
                 <TextView android:importantForAccessibility="no"
                     style="@style/CallLabel"
@@ -125,6 +127,7 @@
                     android:id="@+id/btn_speaker"
                     style="@style/CallIcon"
                     android:contentDescription="speaker"
+                    android:focusable="true"
                     android:src="@drawable/ic_speaker" />
                 <TextView
                     android:id="@+id/lbl_speaker"
@@ -145,6 +148,7 @@
                     android:id="@+id/btn_hold"
                     style="@style/CallIcon"
                     android:contentDescription="hold"
+                    android:focusable="true"
                     android:src="@drawable/ic_hold" />
                 <TextView
                     android:id="@+id/lbl_hold"
@@ -158,6 +162,7 @@
                     android:id="@+id/btn_addcall"
                     style="@style/CallIcon"
                     android:contentDescription="add call"
+                    android:focusable="true"
                     android:src="@drawable/ic_addcall" />
                 <TextView android:importantForAccessibility="no"
                     style="@style/CallLabel"
@@ -169,6 +174,7 @@
                     android:id="@+id/btn_record"
                     style="@style/CallIcon"
                     android:contentDescription="record"
+                    android:focusable="true"
                     android:src="@drawable/ic_record" />
                 <TextView
                     android:id="@+id/lbl_record"
@@ -186,6 +192,7 @@
             android:background="@drawable/end_btn_bg"
             android:padding="19dp"
             android:scaleType="fitCenter"
+            android:focusable="true"
             android:src="@drawable/ic_end"
             android:contentDescription="End call" />
     </LinearLayout>
