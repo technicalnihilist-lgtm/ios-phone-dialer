@@ -1956,6 +1956,28 @@ function glide(i) {
     pill.style.left = tl + "px"; pill.style.width = t.offsetWidth + "px";
   }, 130);
 }
+/* A view that is on its way out is still in the document: the exit animation
+   gives it display:block for the length of the switch, and pointer-events:none
+   only stops taps — it says nothing to the tab order or to the accessibility
+   tree. So for 1.2 s after every tab change the page that had just been left
+   was still reachable: Tab walked into rows of a screen that was already fading
+   away, and a screen reader's swipe carried on through the old list instead of
+   starting on the new one, with the tap that followed doing nothing because the
+   layer no longer takes input. Nothing about how the switch looks changes — the
+   view simply stops being reachable the moment it stops being the one on
+   screen, which is the rule the call sheet and the glass sheet already follow.
+   `inert` is the whole fix on the engines that have it; aria-hidden is the part
+   that works on the WebViews that do not, and it is skipped while the view
+   still holds the focus, because hiding the focused element's own ancestor is
+   refused by the browser anyway. */
+function setLeaving(el, on) {
+  if (!el) return;
+  el.classList.toggle("leaving", on);
+  try { el.inert = on; } catch (e) { }
+  let focused = false;
+  try { focused = !!(document.activeElement && el.contains(document.activeElement)); } catch (e) { }
+  el.setAttribute("aria-hidden", (on && !focused) ? "true" : "false");
+}
 function showView(i) {
   mark(i);
   if (i === cur) return;
@@ -1972,10 +1994,10 @@ function showView(i) {
   /* a switch that interrupts the previous one cleared its timeout below, so the
      view that was leaving never got its class removed by that timer: clear it
      here, off the one reference that knows which view it was */
-  if (leavingEl) leavingEl.classList.remove("leaving");
+  if (leavingEl) setLeaving(leavingEl, false);
   app.classList.remove("goR","goL");
   app.dataset.view = NAMES[i];
-  old.classList.add("leaving");
+  setLeaving(old, true);
   leavingEl = old;
   void app.offsetWidth;
   app.classList.add(d);
@@ -1983,7 +2005,7 @@ function showView(i) {
   clearTimeout(showView.t);
   showView.t = setTimeout(() => {
     app.classList.remove(d);
-    old.classList.remove("leaving");
+    setLeaving(old, false);
     if (leavingEl === old) leavingEl = null;
   }, 1200);
   /* the Recents list is drawn here rather than on every dial — see
@@ -3014,7 +3036,22 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   btn.addEventListener("click", () => {
     if (!prompt) return;
     const p = prompt;
-    p.prompt();
+    /* A beforeinstallprompt event may only be prompted once, and prompt()
+       throws InvalidStateError for the second call. The card stays on screen
+       until userChoice settles — which is not the same moment as the tap — so
+       a second tap on Install, or a tap on a card left up because the promise
+       never settled, called prompt() again and the throw came out of the click
+       handler: nothing hid the card, nothing was logged anywhere the user could
+       see, and the button kept offering an install that could no longer run.
+       Take the event off the field first, so there is exactly one prompt per
+       event, and treat a refusal as the end of the card. */
+    prompt = null;
+    try {
+      p.prompt();
+    } catch (err) {
+      card.classList.remove("show");
+      return;
+    }
     const done = () => card.classList.remove("show");
     try { p.userChoice.then(done, done); } catch (err) { done(); }
   });
