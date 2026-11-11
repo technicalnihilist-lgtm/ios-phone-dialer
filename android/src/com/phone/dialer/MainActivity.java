@@ -626,8 +626,22 @@ public class MainActivity extends Activity {
            this one. Ask for the action the platform actually defines for a
            number, which every dialer answers, this one included. */
         if (lower.startsWith("tel:")) {
+            /* A "#" in a tel: URI is part of the number, not a fragment: *123#
+               runs a code, #31# hides the caller's ID, *#06# shows the IMEI.
+               Uri.parse() does not know that — it splits the fragment at the
+               first "#" for every URI, opaque or not — so "tel:*123#" handed to
+               ACTION_DIAL arrived as "*123" and dialled a different subscriber.
+               DialerActivity.numberFrom() reads the string as written for
+               exactly this reason, and placeCall() already writes the "#" as
+               %23 on the path that falls back to a tel: navigation. This is the
+               third path a tel: link can take, and it was the one that still
+               lost the code. Encode the "#" from the first one onwards, so
+               Uri.parse() keeps the whole number and telecom decodes it back. */
+            int hash = url.indexOf('#');
+            String telUrl = hash < 0 ? url
+                    : url.substring(0, hash) + url.substring(hash).replace("#", "%23");
             try {
-                Intent i = new Intent(Intent.ACTION_DIAL, Uri.parse(url));
+                Intent i = new Intent(Intent.ACTION_DIAL, Uri.parse(telUrl));
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(i);
             } catch (Exception ignored) { }
@@ -641,7 +655,27 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
             return true;
         }
-        return !lower.startsWith("file:///android_asset/") && !lower.startsWith("about:");
+        /* Only the bundled page itself may load. The prefix test above it was a
+           plain startsWith(), so "file:///android_asset/../../../data/data/
+           com.phone.dialer/..." also began with the asset root and was loaded:
+           file access is on for this WebView (setAllowFileAccess), so the ".."
+           segments were resolved against the app's private storage and the page
+           was replaced by whatever file the path named. Nothing on this page
+           ever writes such a link, which is why it never showed; the check is
+           the only thing standing between a link and the app's own files, so
+           make it mean what it says — the asset root, and no way out of it. */
+        if (!lower.startsWith("about:")) {
+            if (!lower.startsWith("file:///android_asset/")) return true;
+            String path = lower.substring("file:///android_asset/".length());
+            int q = path.indexOf('?');
+            if (q >= 0) path = path.substring(0, q);
+            int f = path.indexOf('#');
+            if (f >= 0) path = path.substring(0, f);
+            for (String seg : path.split("/")) {
+                if (seg.equals("..")) return true;   /* not the bundled page: refuse */
+            }
+        }
+        return false;
     }
 
     @Override

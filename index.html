@@ -1075,7 +1075,18 @@ const firstCodePoint = s => {
     }
     break;
   }
-  return s.slice(0, i);
+  /* A joiner that ended the cluster without joining anything is not part of
+     the glyph that gets drawn. The walk above consumes a ZWJ and then asks what
+     may follow it; when nothing does, the cluster was cut with the joiner still
+     inside it, so firstCodePoint("R\u200davi") answered "R\u200d" rather than
+     "R". The avatar then held an invisible character, and initials() joins the
+     two initials with nothing between them — "R" + "\u200d" + "K" — a joiner
+     sitting *between* two letters that are not a conjunct, which is exactly
+     what a font is allowed to act on; and the section header above the row,
+     built from the folded name, which has no joiner, said "R" while the avatar
+     said something else. Drop it when it is the last character of the cluster;
+     a joiner that did join a glyph is in the middle of the cluster and stays. */
+  return (i > 1 && s.charCodeAt(i - 1) === 0x200d) ? s.slice(0, i - 1) : s.slice(0, i);
 };
 /* The header a row is filed under. The list is ordered by the collator on the
    folded name, so the header has to name the character the row is actually
