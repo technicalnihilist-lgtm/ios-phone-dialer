@@ -30,11 +30,18 @@ rm -f Phone-Dialer.apk
 # assets/index.html is the page aapt2 puts in the APK, and nothing used to keep
 # it in step with the page in the repository root: a forgotten copy shipped the
 # previous build's UI inside a new APK. Copy it in as the first thing we do.
-if [ -f ../index.html ]; then
-  cp ../index.html assets/index.html
-else
-  echo "!! ../index.html missing: packaging whatever assets/ already holds"
+#
+# A missing ../index.html used to be a warning, and the build then went on to
+# package whatever assets/ happened to hold — which is the exact defect this
+# copy exists to prevent, only quieter: the checkout could ship a stale page,
+# or no page at all, under a new version number, and the parity check further
+# down was skipped for the same reason so nothing failed. There is no page to
+# build without it, so stop here instead.
+if [ ! -f ../index.html ]; then
+  echo "!! ../index.html missing: this is the page the APK ships, nothing to build"
+  exit 1
 fi
+cp ../index.html assets/index.html
 
 rm -rf build && mkdir -p build/gen build/classes build/dex
 
@@ -78,15 +85,13 @@ cp build/base.apk build/unsigned.apk
 # number — the exact defect the copy at the top of this script was added for.
 # Take the check here, where it cannot be forgotten: the asset the APK actually
 # carries has to be byte for byte the page in the repository root.
-if [ -f ../index.html ]; then
-  WANT=$(md5sum ../index.html | cut -d' ' -f1)
-  GOT=$(unzip -p build/unsigned.apk assets/index.html | md5sum | cut -d' ' -f1)
-  if [ "$WANT" != "$GOT" ]; then
-    echo "!! assets/index.html in the APK ($GOT) is not ../index.html ($WANT)"
-    exit 1
-  fi
-  echo "   packaged assets/index.html matches ../index.html ($WANT)"
+WANT=$(md5sum ../index.html | cut -d' ' -f1)
+GOT=$(unzip -p build/unsigned.apk assets/index.html | md5sum | cut -d' ' -f1)
+if [ "$WANT" != "$GOT" ]; then
+  echo "!! assets/index.html in the APK ($GOT) is not ../index.html ($WANT)"
+  exit 1
 fi
+echo "   packaged assets/index.html matches ../index.html ($WANT)"
 
 echo "== zipalign"
 zipalign -f -p 4 build/unsigned.apk build/aligned.apk
@@ -115,6 +120,27 @@ $J -jar "$BT/lib/apksigner.jar" sign \
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out Phone-Dialer.apk build/aligned.apk
 
+# The parity check above ran on build/unsigned.apk, which is not what ships:
+# zipalign rewrites the archive and apksigner rewrites it again. Check the file
+# that actually leaves this script, so the invariant the runbook asks for by
+# hand — the APK's assets/index.html is byte for byte the page in the
+# repository root — is answered for the APK itself and cannot be skipped.
+SHIPPED=$(unzip -p Phone-Dialer.apk assets/index.html | md5sum | cut -d' ' -f1)
+if [ "$WANT" != "$SHIPPED" ]; then
+  echo "!! Phone-Dialer.apk carries assets/index.html $SHIPPED, not ../index.html $WANT"
+  rm -f Phone-Dialer.apk
+  exit 1
+fi
+echo "   Phone-Dialer.apk carries ../index.html ($WANT)"
+
 echo "== verify"
-$J -jar "$BT/lib/apksigner.jar" verify --print-certs Phone-Dialer.apk | head -5
+# `apksigner verify ... | head -5` reports the exit status of head, so under
+# `set -e` an APK that failed verification — a bad signature, a tampered
+# archive — was announced as a successful build. Keep the output, then decide.
+VERIFY=$($J -jar "$BT/lib/apksigner.jar" verify --print-certs Phone-Dialer.apk) || {
+  echo "!! apksigner verify failed:"
+  echo "$VERIFY"
+  exit 1
+}
+echo "$VERIFY" | head -5
 ls -la Phone-Dialer.apk

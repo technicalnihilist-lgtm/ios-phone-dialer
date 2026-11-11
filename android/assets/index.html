@@ -2401,9 +2401,23 @@ function buildContactIdx() {
       name: name,
       key: folded.toLowerCase(),
       tel: tel,
-      /* the number as it is saved ("(555) 123-4567") and the digits it actually
-         dials; search needs the second one */
-      dig: tel.replace(FMT_NON_DIGIT, ""),
+      /* The number as it is saved, "(555) 123-4567", is all the entry keeps.
+         Two derived forms used to be built here for every contact in the book,
+         on every rebuild of the index — a global replace that strips it to the
+         digits a numeric query is looked for by, and dispNum()'s regex test
+         plus fmt()'s regex pass and three slices for the subtitle — and both
+         were paid whether or not anybody ever searched by number or opened the
+         Contacts tab. On a 3000-contact book that is 3000 throwaway strings
+         and nine thousand regex operations on the load path, and two more
+         strings per contact kept for the life of the page. Neither can change
+         (the number cannot, and the row is the only reader of both), so both
+         are now worked out the first time something actually asks: digOf()
+         below for the digits, rowMarkup() for the subtitle, which is built
+         lazily anyway. Same output, and a book nobody searches by number now
+         costs nothing at all for either.
+         The section header stays here: it is read on every render to decide
+         where the heading goes, and fold() would have to run again to rebuild
+         it, which is the expensive half of this loop. */
       /* the section header this row falls under: the name cannot change, so it
          was pointless rebuilding and upper-casing it for every contact on every
          keystroke */
@@ -2424,11 +2438,7 @@ function buildContactIdx() {
          row is sorted under, and a name fold() does not change — every Indic,
          Arabic, Hebrew, Greek or CJK name, and every ASCII one — keeps the
          header it always had. */
-      sec: sectionOf(folded),
-      /* the subtitle is the number run through fmt(), which is a regex pass and
-         two slices; it cannot change, and it was rebuilt for every visible row
-         on every keystroke */
-      disp: dispNum(tel)
+      sec: sectionOf(folded)
     };
     keys.set(contactKey(p), entry);
     return entry;
@@ -2474,9 +2484,13 @@ function rowMarkup(e) {
   let html = e.html;
   if (html === undefined) {
     const p = e.p;
+    /* the subtitle is worked out here, with the markup that draws it, instead
+       of for every contact in the book when the index is built — see the note
+       on the entry in buildContactIdx(). This block runs once per contact that
+       is actually drawn, so a contact nobody has looked at costs nothing. */
     html = `<button class="row" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">
       ${avHTML(p)}
-      <span class="t"><b>${esc(p.n)}</b><small>${esc(e.disp)}</small></span>
+      <span class="t"><b>${esc(p.n)}</b><small>${esc(dispNum(e.tel))}</small></span>
     </button>`;
     e.html = html;
     /* every other value written into this markup goes through esc(); the section
@@ -2498,6 +2512,17 @@ const NUM_QUERY = /^[0-9\s()+\-.,]+$/;
    same /g, one more object to build at load and one more name to keep in step.
    Ask the one that already exists. */
 const numQuery = r => NUM_QUERY.test(r) ? r.replace(FMT_NON_DIGIT, "") : "";
+/* The digits a contact dials, worked out the first time a numeric query asks
+   for them and kept on the entry from then on. buildContactIdx() used to run
+   this global replace for every contact in the book — 3000 of them on a real
+   address book, on the load path, before the first list could be drawn — and
+   hold the result for the life of the page, for a value that only a query made
+   of digits ever reads. Only that path pays for it now, and only once. */
+function digOf(e) {
+  let d = e.dig;
+  if (d === undefined) { d = e.tel.replace(FMT_NON_DIGIT, ""); e.dig = d; }
+  return d;
+}
 function renderContacts(q) {
   /* Trimmed, and with every run of spaces collapsed to one — the same shape the
      index keys are built in. A search box that ends in a space is not a corner
@@ -2553,7 +2578,7 @@ function renderContacts(q) {
   for (let i = 0; i < base.length; i++) {
     const e = base[i];
     if (needle && e.key.indexOf(needle) < 0 && e.tel.indexOf(raw) < 0
-        && !(needleDig && e.dig.indexOf(needleDig) >= 0)) continue;
+        && !(needleDig && digOf(e).indexOf(needleDig) >= 0)) continue;
     picked.push(e);
   }
   const prev = shownRows;
