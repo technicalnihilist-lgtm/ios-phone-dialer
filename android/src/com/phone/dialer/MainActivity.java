@@ -498,9 +498,18 @@ public class MainActivity extends Activity {
      */
     @Override
     protected void onPause() {
-        if (web != null) {
-            web.onPause();
-            web.pauseTimers();
+        /* Every other WebView call in this class is guarded, and each of those
+           guards carries the same note: the renderer can be gone between the
+           null check and the call, or the view can be destroyed under us. These
+           two were the exception. A throw out of onPause() is caught by nobody —
+           it takes the app down on the way off the screen, and the timers it was
+           meant to stop are exactly the ones that must not keep running in the
+           background. Guard each call on its own, so a failure in the first
+           cannot skip the second. */
+        WebView w = web;
+        if (w != null) {
+            try { w.onPause(); } catch (Exception ignored) { }
+            try { w.pauseTimers(); } catch (Exception ignored) { }
         }
         super.onPause();
     }
@@ -527,9 +536,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (web != null) {
-            web.resumeTimers();
-            web.onResume();
+        /* same rule as onPause(): a WebView call that throws out of onResume()
+           takes the app down on the way back to the foreground, which is the one
+           moment a dialer must survive. Guarded separately, so the second call
+           still runs when the first one fails. */
+        WebView w = web;
+        if (w != null) {
+            try { w.resumeTimers(); } catch (Exception ignored) { }
+            try { w.onResume(); } catch (Exception ignored) { }
         }
         /* Granting contacts or call-log access from the system Settings screen and
            coming back left the app showing its empty states until it was killed
@@ -746,8 +760,21 @@ public class MainActivity extends Activity {
 
     /** What Back does when the page is not holding anything open. */
     private void backOut() {
-        if (web != null && web.canGoBack()) web.goBack();
-        else super.onBackPressed();
+        /* Two WebView calls, both unguarded, on the path every Back press takes —
+           and one of them runs from an evaluateJavascript() callback, where a
+           throw has nowhere to go but the main looper, which finishes the app.
+           A renderer that has just died is precisely the case the guard exists
+           for; with it, Back falls through to the framework's own handling
+           instead of crashing. */
+        boolean wentBack = false;
+        WebView w = web;
+        if (w != null) {
+            try { wentBack = w.canGoBack(); } catch (Exception ignored) { wentBack = false; }
+            if (wentBack) {
+                try { w.goBack(); } catch (Exception ignored) { wentBack = false; }
+            }
+        }
+        if (!wentBack) super.onBackPressed();
     }
 
     /* ------------------------------------------------------------------ */

@@ -728,15 +728,23 @@ public class CallActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 20);
             return;
         }
-        File dir = getExternalFilesDir(null);
-        if (dir == null) dir = getFilesDir();
-        File out = new File(dir, "call-" + System.currentTimeMillis() + ".m4a");
-        /* the constructor sat outside the try: a MediaRecorder that failed to be
-           created (media server busy or dead, encoder unavailable) threw straight
-           out of the click handler and took the app down, where every other
-           failure on this path is caught and explained with a toast */
+        /* The directory lookup and the file name were built out here, above the
+           try, and they are the two calls on this path that talk to the storage
+           system: getExternalFilesDir() asks the media provider where the app's
+           external directory is, and getFilesDir() creates the app's data
+           directory and throws IllegalStateException when it cannot (storage
+           full, the data partition remounted read-only, a device whose
+           /data/system/users/0 is unwritable). Either one threw straight out of
+           the click handler and took the app down mid-call — the same shape as
+           the MediaRecorder constructor that used to sit here, and the same fix:
+           build them inside the try, so the catch that already explains every
+           other failure on this path explains this one too. */
+        File out = null;
         MediaRecorder r = null;
         try {
+            File dir = getExternalFilesDir(null);
+            if (dir == null) dir = getFilesDir();
+            out = new File(dir, "call-" + System.currentTimeMillis() + ".m4a");
             r = new MediaRecorder();
             r.setAudioSource(MediaRecorder.AudioSource.VOICE_CALL);
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
