@@ -1513,6 +1513,34 @@ let matchForValue = null, matchForGen = -1, matchFound = null;
 /* a fresh RegExp for every keystroke and for every tap on the chip and on the
    call button, for a pattern that never changes. Hoisted, like the others. */
 const USSD_SYMBOL = /[*#]/;
+/**
+ * Whether the digits typed so far are the beginning of a number that was saved
+ * with its country code in front of it.
+ *
+ * A synced address book stores most numbers outside North America with the
+ * code attached — "+91 98765 43210" — and the digits a person dials locally
+ * start *after* it. findMatch() compared the typed digits with the whole saved
+ * number from its first character, so 98765 matched no contact whose number
+ * begins 91: the chip stayed empty for the first nine keystrokes of a perfectly
+ * ordinary number and appeared only when the tenth digit completed it, and a
+ * typo anywhere before that showed no contact at all — while the same number
+ * saved without the code matched from the first digit. The typed digits are
+ * looked for one to three characters in, which is where a country code ends,
+ * and only when what follows them is still a whole number of at least seven
+ * digits: without that test "5123" would match a contact saved as 5551234,
+ * whose 5123 also begins two characters in, and a seven-digit number has no
+ * country code in front of it to strip. Four digits rather than three, because
+ * the shortest query this rule would otherwise accept — "555" — is also the
+ * area code of a number saved as 2825551234, where 555 really does begin three
+ * characters in; a chip that names the wrong person is worse than one that
+ * appears a keystroke later, and tapping it dials that person.
+ */
+function ccHead(tel, d) {
+  /* a number no longer than the query cannot hold it after a country code */
+  if (d.length < 4 || tel.length < 8 || tel.length <= d.length) return false;
+  const at = tel.indexOf(d);
+  return at >= 1 && at <= 3 && tel.length - at >= 7;
+}
 function findMatch() {
   if (value === matchForValue && contactGen === matchForGen) return matchFound;
   matchForValue = value;
@@ -1550,6 +1578,10 @@ function findMatch() {
          longer is a different number that merely ends the same way. */
       (tel.length >= 7 && d.length > tel.length && d.length - tel.length <= 3
         && d.endsWith(tel)) ||
+      /* ...and the head of it, which is the case the tail above cannot reach:
+         the saved number carries a country code, so the digits being typed are
+         the beginning of the part after it. See ccHead(). */
+      ccHead(tel, d) ||
       t9Of(p).startsWith(d);
   }) || null;
   return matchFound;
