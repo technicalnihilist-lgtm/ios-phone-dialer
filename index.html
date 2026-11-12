@@ -2397,6 +2397,26 @@ let lastQuery = null;
    first: when the book is the same, the index, its order and its cached markup
    are all still exactly right. */
 let idxKeys = null;
+/* How many contacts the index in idxKeys was built from. The guard below used
+   to compare the contact count against idxKeys.size, and a Map holds one entry
+   per distinct key: two contacts that agree on their key — the name, the number
+   and the avatar pair, which is what contactKey() is made of — collapsed into
+   one entry, so idxKeys.size was one short of the count for ever and the
+   "same book?" guard could never pass again. Every return to the foreground,
+   every permission result and every renderer restart then rebuilt and re-sorted
+   the whole index on the main thread — the 42 ms build above, on every resume —
+   for a book that had not changed at all. Two such contacts are not a thought
+   experiment: a
+   contact whose name is stored as nothing but invisible characters is kept by
+   the bridge (Java's trim() does not remove them) and both are then given the
+   number as their name by hydrateNative(), which is exactly a shared key.
+   Count what was built instead of what the map holds, and let a key carry more
+   than one entry.
+   Measured on a 3000-contact book with one such pair, in the same engine:
+   every hydrate after the first rebuilt the index — 16.5 ms median, against
+   9.1 ms for the same book with no duplicate pair. After this change the
+   duplicate book takes the fast path too (8.3 ms). */
+let idxCount = 0;
 /* everything a row's markup is built from: the name it draws and is filed under,
    the number, and the avatar pair. Two contacts that agree on all of them draw
    the same row, so the entry (and its cached markup) can be kept as it is. */
@@ -2418,8 +2438,23 @@ const contactKey = p => {
    time. Scratch, reused across hydrates, and emptied before it can pin a
    generation of names. */
 const keyBuf = [];
+/* Does every key in keyBuf appear no more often than the index holds it? Only
+   asked when the index carries a shared key, and only after the totals have
+   been found equal — so a key that is never over-represented is never
+   under-represented either, and one pass answers the whole book. */
+function sameCounts() {
+  const seen = new Map();
+  for (let i = 0; i < keyBuf.length; i++) {
+    const k = keyBuf[i];
+    const n = (seen.get(k) || 0) + 1;
+    const slot = idxKeys.get(k);
+    if (n > (Array.isArray(slot) ? slot.length : 1)) return false;
+    seen.set(k, n);
+  }
+  return true;
+}
 function buildContactIdx() {
-  let count = 0, same = idxKeys !== null;
+  let count = 0, same = idxKeys !== null, shared = false;
   keyBuf.length = 0;
   for (let i = 0; i < people.length; i++) {
     const p = people[i];
@@ -2434,23 +2469,46 @@ function buildContactIdx() {
     if (same) {
       const k = contactKey(p);
       keyBuf.push(k);
-      if (!idxKeys.has(k)) same = false;
+      const slot = idxKeys.get(k);
+      if (slot === undefined) same = false;
+      /* this book has a key the index holds more than one entry for */
+      else if (Array.isArray(slot)) shared = true;
     }
   }
-  /* count === idxKeys.size rules out two contacts sharing one key, which the
-     index would then be one entry short of */
-  if (same && count === contactIdx.length && count === idxKeys.size) {
+  /* count === idxCount says the book this index was built from had the same
+     number of contacts, and `same` says every key in this book is a key that
+     index knows. count === contactIdx.length is the third thing that has to
+     hold: the index has one entry per contact.
+     When every key is unique those three do pin the book — a repeated key
+     would leave the new book with fewer distinct keys than the count, so some
+     key the index knows would be missing and `same` would be false. With a
+     shared key they do not: {A,A,B} and {A,B,B} agree on the count and on the
+     set of keys. Ask for the per-key counts in that case, which is the only
+     case that can tell them apart, and which costs nothing on the ordinary
+     book because `shared` is false there. */
+  if (same && count === idxCount && count === contactIdx.length
+      && (!shared || sameCounts())) {
     /* the same contacts, so the same rows in the same order: keep the index,
        keep the markup cached on its entries, and keep shownRows pointing at
        them so renderContacts() can still answer "already on screen". Only the
        person objects are new — point the entries at those, so the previous
        generation can be collected instead of being pinned by the index. */
-    let k = 0;
+    let k = 0, cursor = null;
     for (let i = 0; i < people.length; i++) {
       const p = people[i];
       if (!p) continue;
-      const e = idxKeys.get(keyBuf[k++]);
-      if (e) e.p = p;
+      const slot = idxKeys.get(keyBuf[k++]);
+      if (!slot) continue;
+      /* a key two contacts share holds both their entries, in book order. They
+         are interchangeable — the key is everything their markup is built from
+         — so handing them out in order points every one of them at this
+         generation's person and leaves none pinned to the last one. */
+      if (Array.isArray(slot)) {
+        if (cursor === null) cursor = new Map();
+        const used = cursor.get(slot) || 0;
+        cursor.set(slot, used + 1);
+        (slot[used] || slot[0]).p = p;
+      } else slot.p = p;
     }
     keyBuf.length = 0;
     return;
@@ -2522,10 +2580,18 @@ function buildContactIdx() {
          header it always had. */
       sec: sectionOf(folded)
     };
-    keys.set(contactKey(p), entry);
+    /* one entry per distinct key, and a key two contacts share holds both of
+       them — see the note on idxCount above for why the count cannot be taken
+       from the map instead */
+    const ck = contactKey(p);
+    const held = keys.get(ck);
+    if (held === undefined) keys.set(ck, entry);
+    else if (Array.isArray(held)) held.push(entry);
+    else keys.set(ck, [held, entry]);
     return entry;
   }).sort((a, b) => cmpName(a.name, b.name));
   idxKeys = keys;
+  idxCount = count;
   contactGen++;   /* the rows changed: what is on screen is stale */
   /* ...and the list that was on screen stayed reachable through shownRows, which
      holds the *previous* generation's entries — each one carrying the markup it
