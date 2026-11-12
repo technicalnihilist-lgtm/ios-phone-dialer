@@ -102,6 +102,18 @@ echo "== keystore"
 # is already on the device. The release key lives outside this repo: point
 # KEYSTORE at it. Without one the build stops at an unsigned, aligned APK.
 KS=${KEYSTORE:-phone.keystore}
+# ...and the runbook names where that key is kept: /scratch/saved/phone-keystore.jks,
+# with the alias and the two passwords this script already defaults to. Nothing
+# ever looked there, so a run that followed AUTOMATION.md exactly still had to
+# remember to pass KEYSTORE=... on the command line — and one that did not built
+# unsigned, skipped the release and reported the key as unavailable while the
+# key was sitting on disk the whole time. Fall back to the documented path when
+# no key was named and none sits beside this script. The check below is
+# unchanged, so a machine with no key anywhere still stops at the unsigned APK.
+if [ ! -f "$KS" ] && [ -z "$KEYSTORE" ] && [ -f /scratch/saved/phone-keystore.jks ]; then
+  KS=/scratch/saved/phone-keystore.jks
+  echo "   using the runbook's signing key at $KS"
+fi
 if [ ! -f "$KS" ]; then
   echo "!! no signing key at $KS"
   echo "!! APK left unsigned at build/aligned.apk - do not publish it"

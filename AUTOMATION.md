@@ -27,7 +27,7 @@ Not allowed: new buttons, new screens, new settings, restyled components, moved 
    - rebuild the APK and confirm `unzip -p Phone-Dialer.apk assets/index.html | md5sum` equals `md5sum android/assets/index.html`;
    - check the version with `aapt dump badging`.
 
-5. Bump `versionCode` (+1) and `versionName` (patch or minor) in `android/AndroidManifest.xml`, and the version rows in `README.md`.
+5. Bump `versionCode` (+1) and `versionName` (patch or minor) in `android/AndroidManifest.xml`, and the version rows in `README.md`. Also set `CACHE` in `sw.js` to `phone-<versionName>`: a service worker is updated by a byte change in that file and nothing else, so a release that leaves the string alone never re-runs `install` and an installed app keeps serving the previous build's precached page from the site root.
 
 6. Publish. `git push` does **not** work here (the GitHub App is not installed on this repo and returns 403), so commit through the API instead:
    - `GITHUB_CREATE_A_BLOB` for every binary file (base64), `content` inline for text files;
