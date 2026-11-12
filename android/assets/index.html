@@ -1195,9 +1195,17 @@ const COLOUR_RE = /^(?:#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z
 const isColour = v => typeof v === "string" && COLOUR_RE.test(v);
 const avColors = c => (Array.isArray(c) && c.length > 1
   && isColour(c[0]) && isColour(c[1])) ? c : AV_FALLBACK;
+/* The initials are a picture of the name beside them, and a screen reader read
+   them out as if they were part of it: every row in Contacts and Recents was
+   announced as "RK Ravi Kumar", every favourite tile as "BS Bina mobile", and
+   the match chip under the keypad the same way. The glyph says nothing the name
+   does not, and the name is always there — hydrateNative() gives a contact with
+   no name its number — so it is decoration, which is what aria-hidden means.
+   The row's own info button already carries it. Nothing about the drawing
+   changes; the attribute is not styled and not read by anything on this page. */
 const avHTML = p => {
   const c = avColors(p && p.c);
-  return `<span class="av" style="--a:${esc(c[0])};--b:${esc(c[1])}">${esc(initialsOf(p))}</span>`;
+  return `<span class="av" aria-hidden="true" style="--a:${esc(c[0])};--b:${esc(c[1])}">${esc(initialsOf(p))}</span>`;
 };
 
 /* ---------------- keypad ---------------- */
@@ -1222,13 +1230,25 @@ const qEl = $("q"), contactsEl = $("contacts"), recentsEl = $("recents"),
 let value = "";
 
 /* call history, restored from storage before anything renders */
+/* A row this page writes always carries a digit: placeCall() refuses a value
+   made only of "+", "*" or "#" before it is written down. The list is read back
+   from storage, though, and an older build wrote whatever was on the keypad —
+   holding 0 until it inserted "+" and then tapping Call put a row of "+" in
+   Recents, which is the defect placeCall() was fixed for. Those rows are still
+   in storage on every device that ever did it, and this restore kept them: the
+   test below only asked for a non-empty string, so "+", "--" and "*#" came back
+   as rows under "mobile" that dial nothing at all when tapped, sitting above
+   the calls that are real. A number is a string with a digit in it; anything
+   else in that list is not a call and is dropped on the way in. */
+const DIALABLE_NUM = /[0-9]/;
 let dialed = [];
 try {
   const saved = localStorage.getItem("phone.dialed");
   const stored = JSON.parse(saved || "[]");
   if (Array.isArray(stored)) {
     dialed = stored
-      .filter(d => d && typeof d === "object" && typeof d.number === "string" && d.number)
+      .filter(d => d && typeof d === "object" && typeof d.number === "string"
+        && DIALABLE_NUM.test(d.number))
       .map(d => ({
         number: d.number,
         name: typeof d.name === "string" && d.name ? d.name : d.number,
@@ -2455,6 +2475,24 @@ function sameCounts() {
 }
 function buildContactIdx() {
   let count = 0, same = idxKeys !== null, shared = false;
+  /* ...and `shared` describes the *index*, not the book in front of us. The
+     guard below was written for a book whose keys are all distinct, and it says
+     nothing about a book that repeats one: `same` only asks that every key this
+     book holds is a key the index knows, so a book that replaces one contact
+     with a second copy of another — {A,B,C} read as {A,A,B} — agrees with the
+     index on the count, on the key set and on contactIdx.length, takes the fast
+     path, and repoints the entries for A and B while C's entry is left standing
+     with the previous generation's person in it. The list then draws C, whose
+     contact no longer exists, in place of the second A, and searches C's name
+     and number. Exactly the defect the note below describes, from the other
+     side: that one covers an index that already holds a shared key, this one a
+     book that has just acquired one.
+     A key seen twice in this book is therefore recorded here, and it sends the
+     comparison to the per-key counts below, which is the only test that can
+     tell a multiset from the set it sits in. On an ordinary book no key repeats
+     and this costs one Set lookup per contact. */
+  let dup = false;
+  const uniq = same ? new Set() : null;
   keyBuf.length = 0;
   for (let i = 0; i < people.length; i++) {
     const p = people[i];
@@ -2469,6 +2507,7 @@ function buildContactIdx() {
     if (same) {
       const k = contactKey(p);
       keyBuf.push(k);
+      if (uniq.has(k)) dup = true; else uniq.add(k);
       const slot = idxKeys.get(k);
       if (slot === undefined) same = false;
       /* this book has a key the index holds more than one entry for */
@@ -2487,7 +2526,7 @@ function buildContactIdx() {
      case that can tell them apart, and which costs nothing on the ordinary
      book because `shared` is false there. */
   if (same && count === idxCount && count === contactIdx.length
-      && (!shared || sameCounts())) {
+      && (!(shared || dup) || sameCounts())) {
     /* the same contacts, so the same rows in the same order: keep the index,
        keep the markup cached on its entries, and keep shownRows pointing at
        them so renderContacts() can still answer "already on screen". Only the
