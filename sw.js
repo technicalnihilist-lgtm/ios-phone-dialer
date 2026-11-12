@@ -9,7 +9,7 @@
    no way to notice. Keep the build's version in this string and bump it with
    the manifest; install then runs once per release, precaches both entries from
    the network, and the activate handler drops the previous cache. */
-const CACHE = "phone-2.6.50";
+const CACHE = "phone-2.6.51";
 /* every cache this app owns starts with this, so the activate handler below can
    tell its own from the ones other apps on the same origin keep */
 const PREFIX = "phone-";
