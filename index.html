@@ -1888,27 +1888,116 @@ const RUN_JUNK = /[^\d+*#]/g;
    split() are both called with it, and a global pattern would carry lastIndex
    from one call into the next. */
 const SEP_RE = /\r\n|[\r\n\t\v\f\u0085\u2028\u2029]/;
+/* A run whose every group is exactly four digits long is a card number or an
+   IMEI written out in fours, not a pair of numbers: no telephone number is
+   grouped that way, and a card is the one long number a clipboard really does
+   hold. runPieces() will not cut such a run at a space, so it stays whole and
+   the fifteen-digit rule below then refuses it rather than dialling a slice of
+   it. No `g` flag: it is only ever handed to test(). */
+const FOURS = /^\D*(?:\d{4}\D*){3,}$/;
+/* How many digits a piece of text holds. */
+function digitsIn(text) {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c >= 48 && c <= 57) n++;
+  }
+  return n;
+}
+/* Where one number inside a run ends and the next begins.
+   A run is the longest stretch of characters that can belong to a number, and
+   it was read as a single number however many numbers it actually held. That is
+   right for one number written with separators — "+91 98765 43210", "(080) 2345
+   6789", "1-800-FLOWERS" — and wrong for a clip holding two: the characters
+   between two numbers are the same ones that sit inside one, so
+   "555-1234 987-6543" was welded into 55512349876543, a fourteen-digit
+   stranger's number, and "(555) 123-4567 (987) 654-3210" became twenty digits
+   of nothing at all. Three things end a number here, and each of them is
+   certain rather than a guess:
+   - a "+" that is not the first character of the number it sits in starts a new
+     one: a "+" is a dialling prefix and is only ever at the front (the same rule
+     placeCall() applies to a number that already carries one);
+   - a space or a tab with a whole number on each side of it, which is seven
+     digits each — the shortest number that carries no country code. A single
+     number is never written as two groups of seven, while every way one really
+     is written keeps a group of four or fewer on at least one side of a space:
+     "98765 43210" is five and five, "080 2345 6789" is three, four and four,
+     "+91 98765 43210" is two, five and five, "1800 123 4567" is four, three and
+     four. Only a space cuts: a hyphen or a dot sits inside a number in exactly
+     the same place ("080-2345-6789" is seven digits by its first hyphen), so
+     cutting there would split a real number in half;
+   - a space straight after a number that ends in "#", which is the end of a
+     service code and never of anything else.
+   Each piece is judged on its own by firstDialRun(), so the first complete
+   number in the clip is still the one that reaches the keypad. */
+function runPieces(text) {
+  /* first the "+", because a "+" ends the number before it whatever else is in
+     the run: "+1 415 555 2671 +1 415 555 0000" is two numbers, and the space
+     inside the first one is not a boundary at all */
+  const byPlus = [];
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charAt(i) === "+" && i > from) {
+      byPlus.push(text.slice(from, i));
+      from = i;
+    }
+  }
+  byPlus.push(text.slice(from));
+  const out = [];
+  for (let p = 0; p < byPlus.length; p++) {
+    const piece = byPlus[p];
+    /* fours all the way through: one long number, and a space in it is not a
+       boundary — see FOURS above */
+    const fours = FOURS.test(piece);
+    let start = 0;
+    for (let i = 0; i < piece.length; i++) {
+      const ch = piece.charAt(i);
+      if (ch !== " " && ch !== "\t") continue;
+      const before = piece.slice(start, i);
+      const digits = digitsIn(before);
+      if ((!fours && digits >= 7 && digitsIn(piece.slice(i)) >= 7)
+          || (digits >= 1 && before.charAt(before.length - 1) === "#")) {
+        out.push(before);
+        start = i;
+      }
+    }
+    out.push(piece.slice(start));
+  }
+  return out;
+}
 /* The first run in one line of text that holds three digits or more. */
 function firstDialRun(s) {
   DIAL_RUN.lastIndex = 0;
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
-    const run = m[0].replace(RUN_JUNK, "");
-    let digits = 0;
-    for (let i = 0; i < run.length; i++) {
-      const c = run.charCodeAt(i);
-      if (c >= 48 && c <= 57) digits++;
+    const pieces = runPieces(m[0]);
+    for (let p = 0; p < pieces.length; p++) {
+      const run = pieces[p].replace(RUN_JUNK, "");
+      let digits = 0;
+      for (let i = 0; i < run.length; i++) {
+        const c = run.charCodeAt(i);
+        if (c >= 48 && c <= 57) digits++;
+      }
+      /* No telephone number is longer than the fifteen digits E.164 allows, so a
+         run that still holds more than fifteen after runPieces() has split every
+         boundary it could find is not a number at all: it is a card number, an
+         IMEI, a row of digits out of a table. It used to be pasted anyway, cut
+         to twenty characters by the caller and dialled as a stranger's number.
+         Skip it and let a later run in the same clip be tried, exactly as a word
+         with one digit in it is skipped. */
+      if (digits > 15) continue;
+      /* Three digits or more is what makes a run a number rather than a word
+         with a digit in it. A service code is not a number, though, and the
+         shortest ones carry two digits: "*#06#" (the IMEI) and "#31#" (caller
+         ID) arrived here as two-digit runs and were dropped, so pasting either
+         one out of a message put nothing on the keypad while typing the same
+         characters on it worked. A run that both opens with "*" or "#" and
+         closes with "#" is a code and nothing else — no word ends that way — so
+         take it on one digit. */
+      const code = (run.charAt(0) === "*" || run.charAt(0) === "#")
+        && run.charAt(run.length - 1) === "#";
+      if (digits >= 3 || (code && digits >= 1)) return run;
     }
-    /* Three digits or more is what makes a run a number rather than a word with
-       a digit in it. A service code is not a number, though, and the shortest
-       ones carry two digits: "*#06#" (the IMEI) and "#31#" (caller ID) arrived
-       here as two-digit runs and were dropped, so pasting either one out of a
-       message put nothing on the keypad while typing the same characters on it
-       worked. A run that both opens with "*" or "#" and closes with "#" is a
-       code and nothing else — no word ends that way — so take it on one digit. */
-    const code = (run.charAt(0) === "*" || run.charAt(0) === "#")
-      && run.charAt(run.length - 1) === "#";
-    if (digits >= 3 || (code && digits >= 1)) return run;
   }
   return "";
 }
