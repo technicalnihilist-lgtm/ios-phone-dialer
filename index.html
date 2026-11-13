@@ -2058,7 +2058,7 @@ function digitsIn(text) {
      service code and never of anything else.
    Each piece is judged on its own by firstDialRun(), so the first complete
    number in the clip is still the one that reaches the keypad. */
-function runPieces(text) {
+function runPieces(text, wordHead) {
   /* first the "+", because a "+" ends the number before it whatever else is in
      the run: "+1 415 555 2671 +1 415 555 0000" is two numbers, and the space
      inside the first one is not a boundary at all */
@@ -2083,8 +2083,33 @@ function runPieces(text) {
       if (ch !== " " && ch !== "\t") continue;
       const before = piece.slice(start, i);
       const digits = digitsIn(before);
+      /* The run itself can begin inside a word, and the space rules below need
+         seven digits on each side of a space, so a short head never split and
+         the word's tail was welded to the number after it. "v1.2.3 9876543210"
+         — a version string and then a number, which is how a release note or a
+         chat message reads — was pasted as 1239876543210, and "v2.6.61
+         (9876543210)" as 26619876543210: neither is any number in the clip, so
+         the keypad held fourteen digits that dial a stranger. The head of a
+         welded run is the end of a word and not the beginning of a number when
+         it is too short to be one on its own, and what follows the space is a
+         whole number; split there, and firstDialRun() then drops the welded
+         fragment and keeps the number, which is what its own note above already
+         says the clip should yield. */
+      let tail = 0;
+      if (wordHead && p === 0 && start === 0 && digits >= 1 && digits < 7) {
+        let j = i + 1;
+        while (j < piece.length && piece.charAt(j) !== " " && piece.charAt(j) !== "\t") j++;
+        tail = digitsIn(piece.slice(i, j));
+        /* ...and a head written with a dot in it is a version or a decimal, never
+           the start of a telephone number, so a number after it counts as whole
+           even when it is itself written in groups: "v2.6.61 98765 43210" and
+           "rev 1.2 022-2345-6789" are a number with a label in front, not an
+           eleven- and a thirteen-digit number. */
+        if (before.indexOf(".") >= 0) tail = Math.max(tail, digitsIn(piece.slice(i)));
+      }
       if ((!fours && digits >= 7 && digitsIn(piece.slice(i)) >= 7)
-          || (digits >= 1 && before.charAt(before.length - 1) === "#")) {
+          || (digits >= 1 && before.charAt(before.length - 1) === "#")
+          || tail >= 7) {
         out.push(before);
         start = i;
       }
@@ -2099,7 +2124,12 @@ function firstDialRun(s) {
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
     const welded = weldedRun(s, m.index, m[0]);
-    const pieces = runPieces(m[0]);
+    /* whether this run begins inside a word — a letter straight before it, with
+       no space between them. See runPieces(), which needs to know: the digits a
+       word ends with are not the beginning of the number after it. */
+    const wordHead = m.index > 0 && !/^\s/.test(m[0])
+      && WORD_EDGE.test(s.charAt(m.index - 1));
+    const pieces = runPieces(m[0], wordHead);
     for (let p = 0; p < pieces.length; p++) {
       const run = pieces[p].replace(RUN_JUNK, "");
       let digits = 0;
@@ -2125,6 +2155,17 @@ function firstDialRun(s) {
          characters on it worked. A run that both opens with "*" or "#" and
          closes with "#" is a code and nothing else — no word ends that way — so
          take it on one digit. */
+      /* ...and the other way round: a run that opens with "#" and does not
+         close with one is not a code either. "Order #12345 shipped" — an order
+         or reference number written out in prose, which is what a clip from a
+         chat or a shop usually holds — put "#12345" on the keypad as though it
+         were dialable, and Call then handed telecom "tel:%2312345": neither a
+         number nor a service code, so the tap either failed or reached whatever
+         the network made of it. No telephone number opens with "#"; every code
+         that does also closes with one. A leading "*" is deliberately left
+         alone: a star code can be written either way, and nothing in the clip
+         says which one this is. */
+      if (run.charAt(0) === "#" && run.charAt(run.length - 1) !== "#") continue;
       const code = (run.charAt(0) === "*" || run.charAt(0) === "#")
         && run.charAt(run.length - 1) === "#";
       if (digits >= 3 || (code && digits >= 1)) return run;
