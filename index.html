@@ -1133,7 +1133,21 @@ const firstCodePoint = s => {
      built from the folded name, which has no joiner, said "R" while the avatar
      said something else. Drop it when it is the last character of the cluster;
      a joiner that did join a glyph is in the middle of the cluster and stays. */
-  return (i > 1 && s.charCodeAt(i - 1) === 0x200d) ? s.slice(0, i - 1) : s.slice(0, i);
+  /* ...but the zero-width *non*-joiner is the other half of the same rule, and
+     only the joiner was ever dropped. Both are Extend (see isExtend()), so the
+     walk above takes either one and then asks what may follow it; when nothing
+     does, the cluster is cut with the ZWNJ still inside it, and
+     firstCodePoint("R\u200cavi") answered "R\u200c" rather than "R" — the
+     identical defect, on the character beside the one that was fixed. The
+     avatar held an invisible character, initials() put it *between* two
+     initials ("R" + "\u200c" + "K"), and the section header above the row —
+     built from the folded name, which strips both joiners — said "R" while the
+     avatar said something else. A name arrives like this whenever it was copied
+     out of a page or a chat, or typed on a Devanagari keyboard, which writes a
+     ZWNJ after a virama to ask for the explicit halant form: "क्\u200c रवि"
+     began with a cluster that was "क्\u200c" rather than "क्". */
+  const last = i > 1 ? s.charCodeAt(i - 1) : 0;
+  return (last === 0x200d || last === 0x200c) ? s.slice(0, i - 1) : s.slice(0, i);
 };
 /* The header a row is filed under. The list is ordered by the collator on the
    folded name, so the header has to name the character the row is actually
@@ -1191,8 +1205,55 @@ function initialsOf(p) {
    keyword is a colour; anything else falls back to the pair the app already
    uses for a contact with no palette. Every value this app is written with —
    the Java side sends #rrggbb — passes unchanged. */
-const COLOUR_RE = /^(?:#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,24})$/i;
-const isColour = v => typeof v === "string" && COLOUR_RE.test(v);
+/* ...but "a plain colour keyword" has to mean one of them, and the keyword half
+   of this test was [a-z]{3,24}: any word at all, of any spelling, was taken for
+   a colour. Three things went wrong with that, and each of them is the defect
+   the check above exists to prevent:
+   - the CSS-wide keywords (inherit, initial, unset, revert) and currentcolor
+     are not colours. A declaration carrying one is invalid at computed-value
+     time, so --a:inherit made the avatar's own
+     background:linear-gradient(160deg,var(--a),var(--b)) unparseable and the
+     circle drew no background at all — an invisible avatar, which is exactly
+     what the note above says this validation is here to stop;
+   - transparent *is* a colour and paints nothing, so a palette of two of them
+     was the same blank circle by another route;
+   - any other word — "nonsense", a stray "mobile" or "home" from a provider
+     row that answered with the label where the pair should be — was accepted
+     and produced the same unparseable gradient.
+   Name the keywords the CSS colour tables actually define, so the test means
+   what the note above says it means; every other word falls back to the pair
+   this app already uses for a contact with no palette, exactly as a number or
+   a non-string always has. The list is the 148 names in CSS Color 4 (aliases
+   and rebeccapurple included), each of which was checked against a CSS parser.
+   The Java side sends #rrggbb, which the hex half still passes unchanged, so
+   nothing the app itself is written with changes. */
+const COLOUR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const COLOUR_NAMES = Object.create(null);
+/* one expression: a leading "+" on the next line would otherwise be read as a
+   new statement, and only the last chunk of names would reach the table */
+("aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond"
++ " blue blueviolet brown burlywood cadetblue chartreuse chocolate cornflowerblue"
++ " cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen"
++ " darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred"
++ " darksalmon darkseagreen darkslateblue darkslategray darkslategrey"
++ " darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue"
++ " firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod"
++ " gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki"
++ " lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan"
++ " lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon"
++ " lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue"
++ " lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue"
++ " mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen"
++ " mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin"
++ " navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod"
++ " palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum"
++ " powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon"
++ " sandybrown seagreen seashell sienna silver skyblue slateblue slategray"
++ " slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet"
++ " wheat white whitesmoke yellow yellowgreen")
+  .split(" ").forEach(n => { COLOUR_NAMES[n] = 1; });
+const isColour = v => typeof v === "string"
+  && (COLOUR_RE.test(v) || COLOUR_NAMES[v.toLowerCase()] === 1);
 const avColors = c => (Array.isArray(c) && c.length > 1
   && isColour(c[0]) && isColour(c[1])) ? c : AV_FALLBACK;
 /* The initials are a picture of the name beside them, and a screen reader read
