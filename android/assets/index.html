@@ -1883,6 +1883,43 @@ document.addEventListener("pointerdown", e => {
    characters that can belong to a number, and only when that run actually holds
    three digits or more; everything else in the clip is prose. */
 const DIAL_RUN = /[0-9+*#().\-\s]+/g;
+/* Percent-escapes decoded a run at a time, for the clips that hold one escape
+   the URL decoder refuses. dialable() and __phoneNumber() both asked
+   decodeURIComponent() for the whole string, and it throws on the first
+   malformed escape it meets — a bare "%" left in prose, a truncated "%2" —
+   so a clip that carried a perfectly good escape beside it was kept entirely
+   encoded. "50% off tel:%2A123%23" then reached the keypad as "123": the
+   escapes were never decoded, the "%" and the "A" were dropped as junk and
+   the digits of "%2A123%23" were read as the number, so a USSD code pasted
+   out of a message with a discount line above it dialled an ordinary stranger.
+   Decode every run of escapes on its own, which also keeps a multi-byte
+   character whole (a run is decoded as one unit, so "%E2%82%B9" still comes
+   out as the one glyph it spells), and leave only the escapes that are
+   genuinely broken exactly as they arrived — the rule the callers already
+   state, applied to the escape instead of to the whole clip. A clip with no
+   escapes, or one that decodes cleanly, is untouched by this. */
+const ESCAPE_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
+const decodeEscapes = s => s.replace(ESCAPE_RUN, seq => {
+  try { return decodeURIComponent(seq); } catch (e) { return seq; }
+});
+/* Whether a run of number characters is welded to a letter at one end — the
+   numeric part of a word rather than a number standing on its own. "1-800-
+   FLOWERS" is one token, and the run ends where the letters begin, so the run
+   held only "1800" and that four-digit fragment passed the three-digit test
+   and was pasted as a number: tapping a vanity number copied off a card or a
+   web page dialled 1800 instead of the number it stands for, and the same
+   reading took the "1.2.3" out of "v1.2.3 release 9876543210" and pasted
+   "123" over the real number later in the same clip. A space either side is
+   what tells a token from prose — "Call 112 now" keeps its 112 — so only a
+   letter touching the run with no space between them counts, and only a
+   fragment too short to be a number on its own is dropped; "555-1234x89"
+   keeps its seven digits and its extension. */
+const WORD_EDGE = /[A-Za-z]/;
+const weldedRun = (s, at, text) => {
+  const end = at + text.length;
+  if (at > 0 && !/^\s/.test(text) && WORD_EDGE.test(s.charAt(at - 1))) return true;
+  return end < s.length && !/\s$/.test(text) && WORD_EDGE.test(s.charAt(end));
+};
 /* The characters that cannot belong to a number, stripped from a run before its
    digits are counted. Written as a literal inside firstDialRun()'s scan loop, so
    a fresh RegExp object was built for every run the loop looked at — on a clip
@@ -1978,6 +2015,7 @@ function firstDialRun(s) {
   DIAL_RUN.lastIndex = 0;
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
+    const welded = weldedRun(s, m.index, m[0]);
     const pieces = runPieces(m[0]);
     for (let p = 0; p < pieces.length; p++) {
       const run = pieces[p].replace(RUN_JUNK, "");
@@ -1994,6 +2032,8 @@ function firstDialRun(s) {
          Skip it and let a later run in the same clip be tried, exactly as a word
          with one digit in it is skipped. */
       if (digits > 15) continue;
+      /* the numeric fragment of a word, not a number — see weldedRun() */
+      if (welded && digits < 7) continue;
       /* Three digits or more is what makes a run a number rather than a word
          with a digit in it. A service code is not a number, though, and the
          shortest ones carry two digits: "*#06#" (the IMEI) and "#31#" (caller
@@ -2024,7 +2064,10 @@ function dialable(txt) {
      text is then kept exactly as it arrived, which is what Uri.decode() does on
      the other side. */
   let s = String(txt == null ? "" : txt);
-  try { s = decodeURIComponent(s); } catch (e) { }
+  /* ...but one malformed escape must not abandon the ones beside it: see
+     decodeEscapes(), which decodes what it can and leaves only the broken
+     escape as it arrived */
+  try { s = decodeURIComponent(s); } catch (e) { s = decodeEscapes(s); }
   /* A clip holding one number per line — a list copied out of a note, a chat or
      a spreadsheet column — was read as a single run, because \s matches a line
      break too: "555-1234\n987-6543" arrived on the keypad as 55512349876543,
@@ -2345,7 +2388,13 @@ function renderFavs() {
       const words = String(p.n == null ? "" : p.n).split(/\s+/);
       let first = "";
       for (let w = 0; w < words.length; w++) {
-        if (normSpace(words[w])) { first = words[w]; break; }
+        /* the word the test accepts is the word that gets drawn: the raw word
+           still carries the characters normSpace() just stripped, so a name
+           stored as "\u200bRavi" passed the test on "Ravi" and then drew the
+           zero-width space in front of it — the same rule the rest of this page
+           keeps, one line below the test that keeps it */
+        const word = normSpace(words[w]);
+        if (word) { first = word; break; }
       }
       return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(first)}</b><small>mobile</small></button>`;
     }).join("");
@@ -3837,7 +3886,10 @@ window.__phoneNumber = function (n) {
      throws on one, and so this keeps the string exactly as it arrived, which
      is what Uri.decode() does on the other side. */
   let text = String(n == null ? "" : n);
-  try { text = decodeURIComponent(text); } catch (e) { }
+  /* ...and a link that holds one malformed escape must not be left entirely
+     encoded, or the escapes beside it are read as their own digits again —
+     see decodeEscapes() */
+  try { text = decodeURIComponent(text); } catch (e) { text = decodeEscapes(text); }
   /* "tel:123;ext=6" — the part after the semicolon is not the number, and its
      digits would otherwise end up on the end of it */
   const clean = text.split(";")[0].replace(DIAL_JUNK, "").slice(0, 20);
