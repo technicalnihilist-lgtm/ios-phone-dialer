@@ -1227,12 +1227,21 @@ function initialsOf(p) {
    and rebeccapurple included), each of which was checked against a CSS parser.
    The Java side sends #rrggbb, which the hex half still passes unchanged, so
    nothing the app itself is written with changes. */
+/* ...and the table held 147 of them: "coral" — one of the 148, between
+   "chocolate" and "cornflowerblue" — was missing, so the one name the note
+   above promises is looked up fell through the keyword half of isColour() and
+   drew the grey AV_FALLBACK pair instead of the palette the provider sent: an
+   avatar in the wrong colour, which is the silent-substitution half of the
+   defect this check exists to prevent. Checked now against the CSS Color 4
+   keyword list itself: 148 names, no duplicates, every one accepted, and
+   inherit / initial / unset / revert / revert-layer / currentcolor /
+   transparent / rgb() / a 5-digit hex / a number / null still refused. */
 const COLOUR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const COLOUR_NAMES = Object.create(null);
 /* one expression: a leading "+" on the next line would otherwise be read as a
    new statement, and only the last chunk of names would reach the table */
 ("aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond"
-+ " blue blueviolet brown burlywood cadetblue chartreuse chocolate cornflowerblue"
++ " blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue"
 + " cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen"
 + " darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred"
 + " darksalmon darkseagreen darkslateblue darkslategray darkslategrey"
@@ -1489,7 +1498,20 @@ const NON_ASCII = /[^\x00-\x7f]/;
    marks, not letters, so dropping them from the key costs nothing: the Indic
    vowel signs, which spell the word and must stay, are in none of these
    ranges. */
-const VOCALIC = /[\u0300-\u036f\u0591-\u05bd\u05bf\u05c1-\u05c2\u05c4-\u05c5\u05c7\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7-\u06e8\u06ea-\u06ed]/g;
+/* ...but the ranges above stop where the Arabic block did in Unicode 6.0, and
+   the vowel marks an address book can carry do not. Arabic Extended-A
+   (U+08CA..U+08FF — 53 marks: the open fathatan/dammatan/kasratan, the
+   subscript alefs, the Quranic marks) and Arabic Extended-B (U+0898..U+089F)
+   hold the harakat a name written in an Ajami tradition, or copied out of a
+   Quranic or liturgical text, is stored with — and every one of them was kept
+   in the search key, which is exactly the defect the block above was written
+   for: "مُحَمَّدٌ" with U+08F0 on the last letter could not be found by typing
+   "محمد", because the key still carried a mark no keyboard in the search box
+   can produce. U+08E2 is not a mark (it is Cf, the disputed end-of-ayah sign)
+   and is not in either range. Nothing here is a letter: 08CA..08FF and
+   0898..089F hold no code point of general category L, so the Indic and
+   abugida vowel signs — which spell the word — are still untouched. */
+const VOCALIC = /[\u0300-\u036f\u0591-\u05bd\u05bf\u05c1-\u05c2\u05c4-\u05c5\u05c7\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7-\u06e8\u06ea-\u06ed\u0898-\u089f\u08ca-\u08e1\u08e3-\u08ff]/g;
 /* The other half of the same problem: NFD splits an accented letter into a base
    and a mark, but a few Latin letters are letters in their own right and have
    no decomposition at all. "Søren" could not be found by typing "soren",
@@ -3964,13 +3986,47 @@ window.__phoneNumber = function (n) {
 /* one re-measure per frame; also keeps the All/Missed capsule on the selected side
    instead of snapping it back to All when the fonts finish loading */
 let remeasure = false;
-function remeasureLayout() {
-  if (remeasure) return;
-  remeasure = true;
+/* The measurement has to run on a frame that can already see the new size, and
+   the first frame after a `resize` event is not reliably one of those: a rAF
+   callback runs before the browser's own style/layout pass for that frame, so
+   on an engine that has not propagated the new viewport yet, every read below
+   still answers with the *previous* geometry. Nothing measured it again —
+   `remeasure` is clear by then, and the only other resize to arrive is the next
+   one — so the wrong answer stayed on screen. Measured in Chromium (393 -> 360
+   wide, prefers-reduced-motion): the first frame after the resize reported the
+   old tab offsets, so the tab capsule was written to the old tab's left/width
+   and sat off the tab it marked until the next tab change; the cached tab
+   centres were rebuilt from the same stale geometry, so a tap on the bar picked
+   its tab by where the tabs used to be; and the number-line width cache held
+   the old, wider box, so a long number stayed fitted to it and its last digits
+   were cut off with no ellipsis — the exact defect fitNumber() exists to
+   prevent. Run the measurement once more on the following frame, by which time
+   the layout is certainly current, and drop the caches again first so that pass
+   re-reads instead of trusting the first one's answer. The second pass costs
+   nothing when the first was already right: it compares the geometry it would
+   measure against the geometry the capsule is already carrying and returns. */
+function remeasurePass() {
+  const t = tabs[cur];
+  if (!t) return;
+  if (numMaxW && pill.style.left === t.offsetLeft + "px"
+      && pill.style.width === t.offsetWidth + "px") return;
   tabMids = null;   /* the tab centres are about to move: drop the cached ones */
   numMaxW = 0;      /* and so is the width the number line fits into */
   fitText = null;   /* the font may have changed with it: fit the line again */
-  requestAnimationFrame(() => { remeasure = false; snap(); fitNumber(); syncSeg(); });
+  snap(); fitNumber(); syncSeg();
+}
+function remeasureLayout() {
+  if (remeasure) return;
+  remeasure = true;
+  tabMids = null;
+  numMaxW = 0;
+  fitText = null;
+  requestAnimationFrame(() => {
+    remeasure = false;
+    snap(); fitNumber(); syncSeg();
+    /* ...and again on the frame after it, where the new layout is certain */
+    requestAnimationFrame(remeasurePass);
+  });
 }
 addEventListener("resize", remeasureLayout);
 /* fonts.ready is a promise from an optional API: a WebView that answers it with

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.phone.dialer"
-    android:versionCode="87"
-    android:versionName="2.6.60">
+    android:versionCode="88"
+    android:versionName="2.6.61">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
