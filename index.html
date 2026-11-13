@@ -1862,7 +1862,15 @@ function closeMenu() {
     tellModal();
   }
 }
+/* This handler runs for every pointerdown anywhere in the app — every tap on
+   every key, row, tab and panel — and it walked the ancestor chain twice, once
+   for "#menu" and once for "#dialtop", before finding out that there was
+   nothing to close. closeMenu() itself already answers that question first and
+   does nothing unless the menu is showing, so ask it here instead: on an
+   ordinary tap the two selector walks are skipped entirely, and a tap that
+   really does close the menu costs exactly what it did before. */
 document.addEventListener("pointerdown", e => {
+  if (!overlayMenu || !overlayMenu.classList.contains("show")) return;
   if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
 }, true);
 /* The clipboard holds text, not a number, and every character that was not a

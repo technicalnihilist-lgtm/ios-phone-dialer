@@ -9,7 +9,7 @@
    no way to notice. Keep the build's version in this string and bump it with
    the manifest; install then runs once per release, precaches both entries from
    the network, and the activate handler drops the previous cache. */
-const CACHE = "phone-2.6.57";
+const CACHE = "phone-2.6.58";
 /* every cache this app owns starts with this, so the activate handler below can
    tell its own from the ones other apps on the same origin keep */
 const PREFIX = "phone-";
@@ -18,9 +18,27 @@ const ASSETS = [
   "./icons/icon-180.png", "./icons/icon-192.png", "./icons/icon-512.png"
 ];
 
+/* The one handle on this build's cache.
+   Every path that needed the cache opened it again: install once, and then
+   store() once per intercepted request — so a single page load asked
+   CacheStorage to open the same named cache once for the navigation, once for
+   each asset, and once more at install. The name never changes for the life of
+   a worker, so open it once and hand the same promise to everyone. A rejection
+   is not remembered: a store that refused to answer because the quota was
+   momentarily gone must not leave this worker unable to open its cache for the
+   rest of its life. */
+let cachePromise = null;
+const openCache = () => {
+  if (!cachePromise) {
+    cachePromise = caches.open(CACHE);
+    cachePromise.catch(() => { cachePromise = null; });
+  }
+  return cachePromise;
+};
+
 self.addEventListener("install", e => {
   e.waitUntil(
-    caches.open(CACHE)
+    openCache()
       /* one missing asset used to fail the whole install, so the app never updated */
       .then(c => Promise.all(ASSETS.map(u => c.add(u).catch(() => {}))))
       .then(() => self.skipWaiting())
@@ -39,6 +57,14 @@ self.addEventListener("activate", e => {
          to drop, so match them by name. */
       .then(keys => Promise.all(keys.filter(k => k !== CACHE && k.indexOf(PREFIX) === 0)
         .map(k => caches.delete(k))))
+      /* A cache store that refuses to answer — storage turned off, the quota
+         gone — rejected this chain, and everything after it went with it: the
+         new worker activated but never claimed the open pages, so an installed
+         app kept running the previous build's page until every tab was closed,
+         which is the one thing a release is meant to fix. The fetch handler
+         below already answers a refusing cache with an error response for
+         exactly this reason; answer a refusing activate by carrying on. */
+      .catch(() => { })
       .then(() => self.clients.claim())
   );
 });
@@ -60,7 +86,7 @@ self.addEventListener("fetch", e => {
   const store = res => {
     if (!res || !res.ok) return Promise.resolve(res);
     const copy = res.clone();
-    return caches.open(CACHE)
+    return openCache()
       .then(c => c.put(req, copy))
       .then(() => res, () => res);
   };
