@@ -2033,6 +2033,60 @@ const FOURS = /^\D*(?:\d{4}\D*){3,}$/;
    dots, "555.1234" has four digits after its only one, and both are left
    alone. No `g` flag: it is only ever handed to test(). */
 const DECIMAL = /^[\s(]*\d+\.\d{1,2}[\s)]*$/;
+/* The same defect, in the other spelling a quantity is written with. A price or
+   a count grouped by thousands separators — "₹1,299", "Rs 12,499", "Amount
+   due: 3,500", "Order 12,345 items" — is several runs of digits with a comma
+   between them, and DIAL_RUN ends at every comma, so only the *last* group was
+   ever looked at: pasting a message that quotes a total above a phone number put
+   "299", "499", "500" or "345" on the keypad and Call dialled a stranger,
+   while the number later in the same clip was never reached. DECIMAL above
+   covers a quantity written with a decimal point; this is the quantity written
+   without one.
+   A group that begins immediately after a comma that itself follows a digit is
+   the rest of that quantity and not a number of its own: no telephone number is
+   written with a thousands separator, while the comma that separates two numbers
+   in a clip is always followed by a space ("555-1234, 987-6543"), which this
+   test does not touch — a run that begins with a space is a new field. */
+const isQuantityTail = (s, at) => at > 1 && s.charAt(at) !== " "
+  && s.charAt(at - 1) === "," && s.charAt(at - 2) >= "0" && s.charAt(at - 2) <= "9";
+/* A calendar date is not a number either, and it is the other thing a clip
+   usually holds above a number: "Ref 2024-11-14", "meeting 14/11/2024". The
+   run held the whole of it — "2024-11-14" is eight digits and every character
+   in it belongs to a number — so the keypad was handed "20241114" and Call
+   dialled it. No telephone number is written as a four-digit year beside a month
+   and a day, and neither spelling of a date can be mistaken for one: the year is
+   what makes the four-digit group a year (1900..2099), and the other two groups
+   have to be a real month and a real day. "022-2345-6789" is three, four and
+   four digits and matches neither order. */
+const DATE_YMD = /^[\s(]*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[\s).]*$/;
+const DATE_DMY = /^[\s(]*(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})[\s).]*$/;
+/* ...and the year can be a run of its own. A "/" is not a character DIAL_RUN
+   accepts, so "14/11/2024" — a date written day first with slashes, which is how
+   most of the world writes one — arrives as three runs, and the last of them,
+   "2024", is a four-digit number: it was pasted on its own and Call dialled it.
+   The two spellings that use a "-" or a "." are one run and are answered by
+   isDate(); this is the same date, cut in three. Only a whole four-digit year
+   standing directly after a digit and a separator counts, so the runs of a real
+   number are untouched: a number written with a "/" keeps every group it has
+   ("555/1234" is four runs and none of them is a year), and a number written
+   with a "-" is a single run that never reaches this test. */
+const isDateTail = (s, at) => at > 1 && /^(?:19|20)\d\d$/.test(s.slice(at, at + 4))
+  && (s.charAt(at - 1) === "/" || s.charAt(at - 1) === "-" || s.charAt(at - 1) === ".")
+  && s.charAt(at - 2) >= "0" && s.charAt(at - 2) <= "9"
+  && (at + 4 >= s.length || !/[0-9]/.test(s.charAt(at + 4)));
+function isDate(text) {
+  const a = DATE_YMD.exec(text);
+  if (a) {
+    const y = +a[1], mo = +a[2], d = +a[3];
+    return y >= 1900 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+  }
+  const b = DATE_DMY.exec(text);
+  if (b) {
+    const d = +b[1], mo = +b[2], y = +b[3];
+    return y >= 1900 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+  }
+  return false;
+}
 /* How many digits a piece of text holds. */
 function digitsIn(text) {
   let n = 0;
@@ -2133,6 +2187,10 @@ function firstDialRun(s) {
   DIAL_RUN.lastIndex = 0;
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
+    /* the last group of a thousands-separated quantity — see isQuantityTail() */
+    if (isQuantityTail(s, m.index)) continue;
+    /* the year of a date written with slashes — see isDateTail() */
+    if (isDateTail(s, m.index)) continue;
     const welded = weldedRun(s, m.index, m[0]);
     /* whether this run begins inside a word — a letter straight before it, with
        no space between them. See runPieces(), which needs to know: the digits a
@@ -2141,8 +2199,9 @@ function firstDialRun(s) {
       && WORD_EDGE.test(s.charAt(m.index - 1));
     const pieces = runPieces(m[0], wordHead);
     for (let p = 0; p < pieces.length; p++) {
-      /* the price above a number is a quantity, not the number — see DECIMAL */
-      if (DECIMAL.test(pieces[p])) continue;
+      /* the price above a number is a quantity, not the number — see DECIMAL,
+         and the date beside it — see isDate() */
+      if (DECIMAL.test(pieces[p]) || isDate(pieces[p])) continue;
       /* Markdown emphasis copied out of a chat, a note or a web page —
          "**9876543210**", "*9876543210*", "9876543210*" — is not part of the
          number, and the run kept it. The digits were counted without it, so the
@@ -2156,8 +2215,16 @@ function firstDialRun(s) {
       if (run.indexOf("*") >= 0) {
         run = run.replace(/\*{2,}/g, "");
         if (run.charAt(run.length - 1) === "*") {
-          run = (run.charAt(0) === "*" && run.length > 1)
-            ? run.slice(1, -1)      /* "*123*": an italic pair, both ends go */
+          /* "*123*" is an italic pair and both ends go, but a service code is
+             not italic text: "*121#*" — a code wrapped in emphasis — lost its
+             opening star here and arrived on the keypad as "121#", a different
+             request sent to the network than the one the clip names. Take both
+             ends only when what sits between them is not itself a code. */
+          const inner = run.slice(1, -1);
+          run = (run.charAt(0) === "*" && run.length > 1
+                 && inner.charAt(0) !== "*"
+                 && inner.charAt(inner.length - 1) !== "#")
+            ? inner                  /* "*123*": an italic pair, both ends go */
             : run.slice(0, -1);     /* "123*": a trailing star is not the number */
         }
       }

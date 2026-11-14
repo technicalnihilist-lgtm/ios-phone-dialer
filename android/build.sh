@@ -43,6 +43,34 @@ if [ ! -f ../index.html ]; then
 fi
 cp ../index.html assets/index.html
 
+# Version hygiene. A release is three numbers that have to agree and nothing
+# ever compared them: versionCode and versionName in the manifest, the version
+# the README advertises, and — the one that actually breaks an installed app —
+# the CACHE constant in sw.js. A service worker is updated by a byte change in
+# that file and nothing else, so a release that bumps the manifest and leaves
+# CACHE alone never re-runs install: the app on the device keeps serving the
+# previous build's precached page from the site root, for ever, with no way to
+# notice. A README that names an older version than the manifest is the same
+# defect in the documentation. Check all four here, where the build fails
+# instead of a release shipping one of them stale.
+VN=$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' AndroidManifest.xml | head -1)
+VC=$(sed -n 's/.*android:versionCode="\([^"]*\)".*/\1/p' AndroidManifest.xml | head -1)
+SWC=$(sed -n 's/^const CACHE = "phone-\([^"]*\)";.*/\1/p' ../sw.js | head -1)
+RDV=$(sed -n 's/^| Version | \([^ ]*\) (versionCode \([0-9]*\)) |$/\1 \2/p' ../README.md | head -1)
+if [ -z "$VN" ] || [ -z "$VC" ]; then
+  echo "!! no versionCode/versionName in AndroidManifest.xml"
+  exit 1
+fi
+if [ "$SWC" != "$VN" ]; then
+  echo "!! sw.js precaches phone-${SWC:-<none>} but this build is $VN: an installed app would never update"
+  exit 1
+fi
+if [ "$RDV" != "$VN $VC" ]; then
+  echo "!! README advertises '${RDV:-<none>}' but this build is $VN (versionCode $VC)"
+  exit 1
+fi
+echo "   version $VN ($VC) agrees with sw.js and README"
+
 rm -rf build && mkdir -p build/gen build/classes build/dex
 
 echo "== aapt2 compile"
