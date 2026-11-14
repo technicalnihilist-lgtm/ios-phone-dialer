@@ -9,7 +9,7 @@
    no way to notice. Keep the build's version in this string and bump it with
    the manifest; install then runs once per release, precaches both entries from
    the network, and the activate handler drops the previous cache. */
-const CACHE = "phone-2.6.63";
+const CACHE = "phone-2.6.64";
 /* every cache this app owns starts with this, so the activate handler below can
    tell its own from the ones other apps on the same origin keep */
 const PREFIX = "phone-";
@@ -41,6 +41,17 @@ self.addEventListener("install", e => {
     openCache()
       /* one missing asset used to fail the whole install, so the app never updated */
       .then(c => Promise.all(ASSETS.map(u => c.add(u).catch(() => {}))))
+      /* ...and the store itself can refuse to open: storage turned off for the
+         site, the quota gone, a profile that answers caches.open() with an
+         error. That rejection travelled straight out of this waitUntil(), so
+         install failed, skipWaiting() never ran, the new worker never
+         activated — and the installed app went on serving the previous build's
+         page for ever. That is the one outcome a release exists to prevent,
+         and it is the same failure the activate handler below and the fetch
+         handler's offline() already answer by carrying on. Answer it here too:
+         a cache that cannot be opened costs this build its offline copy, and
+         nothing else. */
+      .catch(() => { })
       .then(() => self.skipWaiting())
   );
 });

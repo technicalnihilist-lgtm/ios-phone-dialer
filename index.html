@@ -2023,6 +2023,16 @@ const SEP_RE = /\r\n|[\r\n\t\v\f\u0085\u2028\u2029]/;
    the fifteen-digit rule below then refuses it rather than dialling a slice of
    it. No `g` flag: it is only ever handed to test(). */
 const FOURS = /^\D*(?:\d{4}\D*){3,}$/;
+/* A quantity is not a number. "Rs 1,234.56" leaves the run "234.56" — the
+   comma ends the run before it — and that piece holds five digits, so it passed
+   every test below and the keypad was handed 23456 while the phone number later
+   in the same clip was never looked at: pasting a message that quotes a price
+   above a number put the price's digits on the keypad, and Call dialled them.
+   A decimal is one dot with one or two digits after it and nothing else on
+   either side; no telephone number is written that way. "022.2345.6789" has two
+   dots, "555.1234" has four digits after its only one, and both are left
+   alone. No `g` flag: it is only ever handed to test(). */
+const DECIMAL = /^[\s(]*\d+\.\d{1,2}[\s)]*$/;
 /* How many digits a piece of text holds. */
 function digitsIn(text) {
   let n = 0;
@@ -2131,7 +2141,26 @@ function firstDialRun(s) {
       && WORD_EDGE.test(s.charAt(m.index - 1));
     const pieces = runPieces(m[0], wordHead);
     for (let p = 0; p < pieces.length; p++) {
-      const run = pieces[p].replace(RUN_JUNK, "");
+      /* the price above a number is a quantity, not the number — see DECIMAL */
+      if (DECIMAL.test(pieces[p])) continue;
+      /* Markdown emphasis copied out of a chat, a note or a web page —
+         "**9876543210**", "*9876543210*", "9876543210*" — is not part of the
+         number, and the run kept it. The digits were counted without it, so the
+         fifteen-digit test passed, and the keypad was handed "**9876543210**",
+         which Call turns into tel:*9876543210*: a star code that runs nothing,
+         over a number that never reached telecom. A dialling string never holds
+         two asterisks together and never ends with one, so strip both spellings
+         before the digits are counted. "*121#", "*#06#" and "*123" arrive and
+         leave with every character they were written with. */
+      let run = pieces[p].replace(RUN_JUNK, "");
+      if (run.indexOf("*") >= 0) {
+        run = run.replace(/\*{2,}/g, "");
+        if (run.charAt(run.length - 1) === "*") {
+          run = (run.charAt(0) === "*" && run.length > 1)
+            ? run.slice(1, -1)      /* "*123*": an italic pair, both ends go */
+            : run.slice(0, -1);     /* "123*": a trailing star is not the number */
+        }
+      }
       let digits = 0;
       for (let i = 0; i < run.length; i++) {
         const c = run.charCodeAt(i);
