@@ -4019,6 +4019,22 @@ window.__phoneNumber = function (n) {
   const clean = text.split(";")[0].replace(DIAL_JUNK, "").slice(0, 20);
   if (!clean) return;
   value = clean;
+  /* A tel: link comes from outside this app — a message, a browser, a contact
+     card — so nothing here can refuse it, and it can arrive at any moment,
+     including while a panel of this page is open. The number was written onto
+     the keypad and the view switched underneath the Liquid Glass sheet (or the
+     Paste menu), so tapping a number in another app came back as this page's
+     settings sheet sitting over the keypad it had just opened, with the number
+     behind it and the green Call button underneath: the tap that asked to dial
+     something left a panel the user had to close by hand first, and a second
+     tel: link arriving in the same state did the same thing again. Close what
+     the page is holding before it shows the keypad — the same rule the
+     hardware-keyboard handler already keeps for a digit typed while a panel is
+     open, and the same pair of calls __phoneBack makes. Both close paths
+     tell the shell the panel is gone, so Back still answers for what is
+     actually on screen. */
+  if (overlayMenu && overlayMenu.classList.contains("show")) closeMenu();
+  if (overlaySheet && overlaySheet.classList.contains("show") && glassBack) glassBack();
   /* the number is only useful on the keypad, so that is the page it opens on */
   if (app.dataset.view !== "keypad") go(3);
   render();
