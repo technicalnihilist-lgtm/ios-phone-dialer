@@ -2120,6 +2120,41 @@ const FOURS = /^\D*(?:\d{4}\D*){3,}$/;
    dots, "555.1234" has four digits after its only one, and both are left
    alone. No `g` flag: it is only ever handed to test(). */
 const DECIMAL = /^[\s(]*\d+\.\d{1,2}[\s)]*$/;
+/* ...but a dotted run is not always one dot, and every spelling with two or more
+   was read as a number. A version string, a clock time written with dots and an
+   IPv4 address are all runs of digits joined by dots, so DIAL_RUN accepted every
+   one of them whole and the piece held three digits or more: pasting a release
+   note ("Changelog 2.6.69: call 9876543210") put 2669 on the keypad, "release
+   1.0.0 022-2345-6789" put 100 there instead of the number beside it, and
+   "IP 192.168.1.1" put 19216811 — a stranger's number — while the real number
+   in the same clip was never looked at. Exactly the defect DECIMAL above was
+   written for, one dot further along.
+   A telephone number written with dots keeps groups of three or four digits —
+   "022.2345.6789", "1.800.555.1234", "080.2345.6789" — while a version or a
+   time is written in groups of one or two ("2.6.69", "1.0.0", "10.30.45",
+   "14.11.24"), and an address is four groups of at most three ("192.168.1.1").
+   So: three or more dot-separated groups, none longer than three digits, is a
+   number only when it is three groups with a four-digit one among them — which
+   is the dotted telephone number and nothing else. Everything this app writes
+   itself is unchanged, and a single dot is still DECIMAL's job.
+   No `g` flag: it is only ever handed to exec()/test(). */
+const DOTTED = /^[\s(]*(\d+(?:\.\d+)+)[\s).]*$/;
+const isDottedLabel = piece => {
+  const m = DOTTED.exec(piece);
+  if (!m) return false;
+  const groups = m[1].split(".");
+  /* one dot is a decimal, and DECIMAL has already answered for it */
+  if (groups.length < 3) return false;
+  let longest = 0;
+  for (let i = 0; i < groups.length; i++) {
+    if (groups[i].length > longest) longest = groups[i].length;
+  }
+  /* "022.2345.6789" — a telephone number, and the only shape that survives */
+  if (longest > 3) return false;
+  /* a version or a clock time (all groups of one or two), or an address (four
+     groups of at most three) */
+  return longest <= 2 || groups.length >= 4;
+};
 /* The same defect, in the other spelling a quantity is written with. A price or
    a count grouped by thousands separators — "₹1,299", "Rs 12,499", "Amount
    due: 3,500", "Order 12,345 items" — is several runs of digits with a comma
@@ -2249,13 +2284,26 @@ function runPieces(text, wordHead) {
   /* first the "+", because a "+" ends the number before it whatever else is in
      the run: "+1 415 555 2671 +1 415 555 0000" is two numbers, and the space
      inside the first one is not a boundary at all */
+  /* ...but a "+" is only a dialling prefix when it stands on its own, and the
+     one place it does not is inside a service code: "**61*+919876543210#" sets
+     call forwarding to a number stored with its country code, and the "+" sits
+     directly after the "*" that introduces it. The split above ran before the
+     star-code logic far below could recognise the code, so the head — "**61*",
+     which is what makes it a forwarding command — was thrown away and the tail
+     was handed to the keypad as "+919876543210#": not the command the clip
+     names, and Call then tried to dial a number with a trailing "#" instead of
+     turning forwarding on. A "+" that follows "*" or "#" belongs to the code in
+     front of it, so it does not start a new piece; the same code without the
+     country code ("**21*9876543210#") already survived, and now the two
+     spellings of it agree. */
   const byPlus = [];
   let from = 0;
   for (let i = 0; i < text.length; i++) {
-    if (text.charAt(i) === "+" && i > from) {
-      byPlus.push(text.slice(from, i));
-      from = i;
-    }
+    if (text.charAt(i) !== "+" || i <= from) continue;
+    const before = text.charAt(i - 1);
+    if (before === "*" || before === "#") continue;
+    byPlus.push(text.slice(from, i));
+    from = i;
   }
   byPlus.push(text.slice(from));
   const out = [];
@@ -2351,7 +2399,7 @@ function firstDialRun(s) {
       if (isQuantityTail(s, from) || isDateTail(s, from)) continue;
       /* the price above a number is a quantity, not the number — see DECIMAL,
          and the date beside it — see isDate() */
-      if (DECIMAL.test(piece) || isDate(piece)) continue;
+      if (DECIMAL.test(piece) || isDottedLabel(piece) || isDate(piece)) continue;
       /* Markdown emphasis copied out of a chat, a note or a web page —
          "**9876543210**", "*9876543210*", "9876543210*" — is not part of the
          number, and the run kept it. The digits were counted without it, so the
