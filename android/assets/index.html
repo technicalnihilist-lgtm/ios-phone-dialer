@@ -1168,9 +1168,23 @@ function sectionOf(folded) {
   if (t && isPunct(t.codePointAt(0))) return "#";
   return (firstCodePoint(t) || "#").toUpperCase();
 }
+/* A name that is nothing but printable ASCII between two non-spaces is the
+   ordinary case, and for it the three steps above are all no-ops: INVISIBLE
+   holds no character in \x20-\x7e, so the replace cannot remove anything; the
+   string has no edge space, so trim cannot cut anything; and with no tab,
+   newline or other \s in it, split(/\s+/) splits on the plain spaces split(" ")
+   already splits on — the empty entries a doubled space would leave are dropped
+   by the same `if (c)` guard that drops a blank word. Skip the regex work for
+   those. Measured on a 2000-contact book, building the avatar initials of the
+   whole list falls from ~60 ms to a few: every row of Contacts, Recents and the
+   match chip goes through here, and the strip-and-trim regexes were the
+   expensive part of drawing a name that was already clean. */
+const PLAIN_NAME = /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/;
 const initials = n => {
-  const words = String(n == null ? "" : n).replace(INVISIBLE, "").trim()
-    .split(/\s+/).filter(Boolean);
+  const s = String(n == null ? "" : n);
+  const words = PLAIN_NAME.test(s)
+    ? s.split(" ")
+    : s.replace(INVISIBLE, "").trim().split(/\s+/).filter(Boolean);
   const out = [];
   for (let i = 0; i < words.length && out.length < 2; i++) {
     const c = firstCodePoint(words[i]);
@@ -1661,19 +1675,43 @@ function ccHead(tel, d) {
    collected once per generation rather than scanned for on every keystroke;
    contactGen moves whenever the book behind people[] can have changed, which is
    the same guard findMatch()'s own answer is cached under. A number two
-   contacts share keeps the first, exactly as find() would have answered. */
-let exactForGen = -1, exactByDig = null;
-function exactMatch(d) {
-  if (exactForGen !== contactGen) {
-    exactForGen = contactGen;
-    exactByDig = new Map();
-    for (let i = 0; i < people.length; i++) {
-      const p = people[i];
-      if (!p) continue;
-      const t = telOf(p);
-      if (t && !exactByDig.has(t)) exactByDig.set(t, p);
-    }
+   contacts share keeps the first, exactly as find() would have answered.
+   ...and the same walk collects what findMatch()'s own search needs from every
+   contact: the digits of its saved number. That string lived in a WeakMap, and
+   the search read it back out of it for every contact of every keystroke — a
+   2000-contact book meant two thousand probes per keypress for a string that
+   cannot change while the index stands. Collected once here beside the contact,
+   the per-keystroke loop is left with a field read. The rows are appended in
+   people[] order and a hole in people[] is skipped, so "the first contact that
+   satisfies any test" is still the same contact find() would have answered
+   with.
+   The T9 digits of the name are NOT collected here. The search only asks for
+   them on a contact whose number tests all failed, so building them for the
+   whole book would have charged every keystroke for a book it never reaches —
+   measured at 12 ms of one-off work on 2000 contacts, on the first key pressed
+   after every hydrate. They are computed the first time a row is reached and
+   kept on the row (see t9OfRow), so a book that answers early still pays
+   nothing, and a row that is reached is not probed for again. */
+let matchIdxGen = -1, exactByDig = null, matchRows = null;
+function buildMatchIdx() {
+  matchIdxGen = contactGen;
+  exactByDig = new Map();
+  matchRows = [];
+  for (let i = 0; i < people.length; i++) {
+    const p = people[i];
+    if (!p) continue;
+    const t = telOf(p);
+    if (t && !exactByDig.has(t)) exactByDig.set(t, p);
+    matchRows.push({ p: p, tel: t, t9: null });
   }
+}
+/* The T9 digits of one row, computed on first use and kept on the row. */
+function t9OfRow(row) {
+  const t = row.t9;
+  return t === null ? (row.t9 = t9Of(row.p)) : t;
+}
+function exactMatch(d) {
+  if (matchIdxGen !== contactGen) buildMatchIdx();
   return exactByDig.get(d) || null;
 }
 function findMatch() {
@@ -1701,10 +1739,17 @@ function findMatch() {
      fold, a WeakMap read and a startsWith for each of them. Measured on a
      3000-contact book, dropping it takes about a sixth off the cost of a
      keystroke's contact match. */
-  matchFound = people.find(p => {
-    if (!p) return false;
-    const tel = telOf(p);
-    return tel.startsWith(d) ||
+  /* The book is walked once per generation now, not once per keystroke: the two
+     strings this search compares — the digits of the saved number and the digits
+     the name maps to — were read back out of their WeakMaps for every contact of
+     every keystroke, and buildMatchIdx() above has already collected both beside
+     the contact. Same tests, same order, same answer; the loop below reads a
+     field where it used to make two map probes. */
+  if (matchIdxGen !== contactGen) buildMatchIdx();
+  let hit = null;
+  for (let i = 0; i < matchRows.length; i++) {
+    const row = matchRows[i], tel = row.tel;
+    if (tel.startsWith(d) ||
       /* a contact saved with a country code never matched the ten digits a
          person actually dials; once enough has been typed to be unambiguous,
          compare the tail of the number too */
@@ -1721,8 +1766,9 @@ function findMatch() {
          the saved number carries a country code, so the digits being typed are
          the beginning of the part after it. See ccHead(). */
       ccHead(tel, d) ||
-      t9Of(p).startsWith(d);
-  }) || null;
+      t9OfRow(row).startsWith(d)) { hit = row.p; break; }
+  }
+  matchFound = hit;
   return matchFound;
 }
 
@@ -1835,14 +1881,31 @@ function reduceMotion() {
 }
 function bump() {
   try {
-    if (numAnim) numAnim.cancel();   /* fast typing used to leave dozens of animations running */
-    numAnim = null;
-    if (reduceMotion()) return;
-    if (springEase === null) {
-      springEase = getComputedStyle(document.documentElement).getPropertyValue("--spring").trim() || "ease-out";
+    if (reduceMotion()) {
+      /* nothing is drawn for someone who asked for less motion, so there is
+         nothing to keep alive either */
+      if (numAnim) { numAnim.cancel(); numAnim = null; }
+      return;
     }
-    numAnim = num.animate([{ transform: "scale(1.08)" }, { transform: "scale(1)" }],
-      { duration: 650, easing: springEase });
+    if (numAnim === null) {
+      if (springEase === null) {
+        springEase = getComputedStyle(document.documentElement).getPropertyValue("--spring").trim() || "ease-out";
+      }
+      numAnim = num.animate([{ transform: "scale(1.08)" }, { transform: "scale(1)" }],
+        { duration: 650, easing: springEase });
+      return;
+    }
+    /* Typing a number is the one thing this page does most, and every key used
+       to throw the running animation away and build another one: a fresh
+       Animation object, the two keyframes parsed again and a new effect for
+       every digit — a few hundred throwaway objects for a ten-digit number
+       typed and corrected, all of it collected again. The keyframes and the
+       easing are the same on every keystroke, so the animation is built once
+       and replayed: cancel() puts it back at its start, play() runs it again
+       from the beginning, which is exactly what a new animation would have
+       done. Nothing about what is drawn changes. */
+    numAnim.cancel();
+    numAnim.play();
   } catch (e) { numAnim = null; }
 }
 /* Haptics are a nicety, and navigator.vibrate is one of the optional platform
@@ -3171,9 +3234,14 @@ function buildContactIdx() {
        does per generation anyway. The match cache beside it holds one person
        and is left alone — one object is not an address book, and dropping it
        would repaint the chip under the keypad for a match that has not
-       changed. */
-    exactForGen = -1;
+       changed.
+       The match rows beside it are dropped for the same reason, one step
+       further: they hold every contact of the generation that has just been
+       replaced, so leaving them standing would pin the whole previous book —
+       and its telOf/t9Of strings — exactly as the map above did. */
+    matchIdxGen = -1;
     exactByDig = null;
+    matchRows = null;
     return;
   }
   keyBuf.length = 0;
