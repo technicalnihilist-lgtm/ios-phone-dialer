@@ -2028,6 +2028,19 @@ const weldedRun = (s, at, text) => {
    cleans. String.replace with a global regex resets lastIndex itself, so
    sharing it is safe, exactly as ESC_RE is. */
 const RUN_JUNK = /[^\d+*#]/g;
+/* One whitespace character, the set DIAL_RUN lets into a run. runPieces() cuts
+   a run where one number ends and the next begins, and it only ever cut on the
+   ASCII space and the tab — while DIAL_RUN accepts everything \s matches. So a
+   clip that separates two numbers with any other space welded them into one:
+   "555-1234" + U+00A0 + "555-1234", which is how two numbers come out of a web
+   page or a chat (a non-breaking space is what a page writes where it does not
+   want a line break), was read as the single fourteen-digit 55512345551234 and
+   dialled a stranger. The same for U+1680, U+2000..U+200A, U+202F, U+205F,
+   U+3000 and U+FEFF — every one of them a space the run accepted and the split
+   did not know. One test, shared by the two places that split, so the set a run
+   accepts and the set that ends a number cannot disagree again. No `g` flag: it
+   is only ever handed to test(). */
+const WS_ONE = /\s/;
 /* Every character a text can break a line or a field on. \s matches all of
    them, so a run that spans one is two numbers welded together; dialable()
    cuts the clip on this before it looks for a number. No `g` flag: test() and
@@ -2065,8 +2078,44 @@ const DECIMAL = /^[\s(]*\d+\.\d{1,2}[\s)]*$/;
    written with a thousands separator, while the comma that separates two numbers
    in a clip is always followed by a space ("555-1234, 987-6543"), which this
    test does not touch — a run that begins with a space is a new field. */
-const isQuantityTail = (s, at) => at > 1 && s.charAt(at) !== " "
-  && s.charAt(at - 1) === "," && s.charAt(at - 2) >= "0" && s.charAt(at - 2) <= "9";
+/* ...and the same quantity is very often written with a space after the comma
+   — "Rs 12, 49, 999" (lakh grouping, which is how a price is printed here),
+   "Amount 1, 299", "Total: 3, 500" — and that spelling was not covered: the
+   run after the comma begins with a space, the test above skips it as "a new
+   field", and its last group was pasted on its own. "Rs 12, 49, 999 only" put
+   999 on the keypad, and "Rs 12, 49, 999. Call 9876543210" dialled 999 instead
+   of the number sitting in the same clip. A group that is exactly three digits,
+   whose comma follows one to three digits, is the tail of a quantity and not a
+   number: a number after a comma — the way two numbers in one clip are
+   separated — is a whole number, so it is longer than a three-digit group or it
+   is preceded by more than three digits ("555-1234, 987-6543" keeps both).
+   Read the characters directly rather than slicing the line, because this runs
+   for every run of every line of every paste. */
+const isQuantityTail = (s, at) => {
+  if (at < 2 || s.charAt(at - 1) !== ",") return false;
+  const prev = s.charAt(at - 2);
+  if (prev < "0" || prev > "9") return false;
+  /* no space after the comma: the rest of the quantity, as before */
+  if (!WS_ONE.test(s.charAt(at))) return true;
+  /* how many digits sit in front of the comma */
+  let back = at - 2, ahead = 0;
+  while (back >= 0) {
+    const c = s.charAt(back);
+    if (c < "0" || c > "9") break;
+    back--; ahead++;
+  }
+  if (ahead > 3) return false;
+  /* exactly three digits after the space, and not a fourth */
+  let i = at;
+  while (i < s.length && WS_ONE.test(s.charAt(i))) i++;
+  if (i === at || i + 3 > s.length) return false;
+  for (let k = 0; k < 3; k++) {
+    const c = s.charAt(i + k);
+    if (c < "0" || c > "9") return false;
+  }
+  const after = s.charAt(i + 3);
+  return after < "0" || after > "9";
+};
 /* A calendar date is not a number either, and it is the other thing a clip
    usually holds above a number: "Ref 2024-11-14", "meeting 14/11/2024". The
    run held the whole of it — "2024-11-14" is eight digits and every character
@@ -2162,7 +2211,7 @@ function runPieces(text, wordHead) {
     let start = 0;
     for (let i = 0; i < piece.length; i++) {
       const ch = piece.charAt(i);
-      if (ch !== " " && ch !== "\t") continue;
+      if (!WS_ONE.test(ch)) continue;
       const before = piece.slice(start, i);
       const digits = digitsIn(before);
       /* The run itself can begin inside a word, and the space rules below need
@@ -2189,7 +2238,7 @@ function runPieces(text, wordHead) {
       if ((wordHead || before.indexOf(".") >= 0)
           && p === 0 && start === 0 && digits >= 1 && digits < 7) {
         let j = i + 1;
-        while (j < piece.length && piece.charAt(j) !== " " && piece.charAt(j) !== "\t") j++;
+        while (j < piece.length && !WS_ONE.test(piece.charAt(j))) j++;
         tail = digitsIn(piece.slice(i, j));
         /* ...and a head written with a dot in it is a version or a decimal, never
            the start of a telephone number, so a number after it counts as whole
@@ -2214,21 +2263,39 @@ function firstDialRun(s) {
   DIAL_RUN.lastIndex = 0;
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
-    /* the last group of a thousands-separated quantity — see isQuantityTail() */
-    if (isQuantityTail(s, m.index)) continue;
-    /* the year of a date written with slashes — see isDateTail() */
-    if (isDateTail(s, m.index)) continue;
     const welded = weldedRun(s, m.index, m[0]);
     /* whether this run begins inside a word — a letter straight before it, with
        no space between them. See runPieces(), which needs to know: the digits a
        word ends with are not the beginning of the number after it. */
     const wordHead = m.index > 0 && !/^\s/.test(m[0])
       && WORD_EDGE.test(s.charAt(m.index - 1));
-    const pieces = runPieces(m[0], wordHead);
+    /* A run can begin with the year of a slash-written date and carry the
+       number after it, because a space belongs to a run: "14/11/2024
+       9876543210" arrives as the one run "2024 9876543210", and the date test
+       then threw the whole run away — the clip held a perfectly good number and
+       the keypad stayed empty, while the same clip written with a "-" pasted
+       it. The year is the first four characters and isDateTail() has already
+       named it; step over them and judge the rest of the run as the number it
+       holds. A run that is nothing but the year keeps skip 0 and is dropped by
+       the test below, exactly as before. */
+    const skip = (m[0].length > 4 && isDateTail(s, m.index)) ? 4 : 0;
+    const pieces = runPieces(m[0].slice(skip), wordHead);
+    /* the pieces are contiguous slices of the run, in order, so the position
+       each one starts at can be followed rather than searched for: the two
+       tests below read the characters *around* a piece, and they need the
+       piece's own place in the line, not the run's */
+    let at = m.index + skip;
     for (let p = 0; p < pieces.length; p++) {
+      const piece = pieces[p];
+      const from = at;
+      at += piece.length;
+      /* the last group of a thousands-separated quantity — see
+         isQuantityTail() — and the year of a date written with slashes — see
+         isDateTail() */
+      if (isQuantityTail(s, from) || isDateTail(s, from)) continue;
       /* the price above a number is a quantity, not the number — see DECIMAL,
          and the date beside it — see isDate() */
-      if (DECIMAL.test(pieces[p]) || isDate(pieces[p])) continue;
+      if (DECIMAL.test(piece) || isDate(piece)) continue;
       /* Markdown emphasis copied out of a chat, a note or a web page —
          "**9876543210**", "*9876543210*", "9876543210*" — is not part of the
          number, and the run kept it. The digits were counted without it, so the
@@ -2238,7 +2305,7 @@ function firstDialRun(s) {
          two asterisks together and never ends with one, so strip both spellings
          before the digits are counted. "*121#", "*#06#" and "*123" arrive and
          leave with every character they were written with. */
-      let run = pieces[p].replace(RUN_JUNK, "");
+      let run = piece.replace(RUN_JUNK, "");
       if (run.indexOf("*") >= 0) {
         /* Two kinds of run are not the emphasised text this block is written
            for, and rewriting them changed a request the user pasted into a
