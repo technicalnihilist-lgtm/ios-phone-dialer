@@ -1236,6 +1236,15 @@ function initialsOf(p) {
    keyword list itself: 148 names, no duplicates, every one accepted, and
    inherit / initial / unset / revert / revert-layer / currentcolor /
    transparent / rgb() / a 5-digit hex / a number / null still refused. */
+/* ...and the hex half carries an alpha channel in two of its four forms, which
+   is the same blank circle by the third route. "transparent" was taken out of
+   the keyword table above because it paints nothing, but "#0000" and "#ff000000"
+   are transparent too, and both passed: the avatar's
+   background:linear-gradient(160deg,var(--a),var(--b)) was fully transparent, so
+   the circle drew no background at all and only the initial sat there over the
+   row behind it. A hex colour whose alpha pair is 00 is not a colour this app
+   can draw with; every value the Java side sends is six digits and opaque, so
+   nothing the app itself is written with is affected. */
 const COLOUR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const COLOUR_NAMES = Object.create(null);
 /* one expression: a leading "+" on the next line would otherwise be read as a
@@ -1261,8 +1270,15 @@ const COLOUR_NAMES = Object.create(null);
 + " slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet"
 + " wheat white whitesmoke yellow yellowgreen")
   .split(" ").forEach(n => { COLOUR_NAMES[n] = 1; });
-const isColour = v => typeof v === "string"
-  && (COLOUR_RE.test(v) || COLOUR_NAMES[v.toLowerCase()] === 1);
+const isColour = v => {
+  if (typeof v !== "string") return false;
+  if (COLOUR_RE.test(v)) {
+    /* the 4- and 8-digit forms end in an alpha pair; "00" is fully transparent */
+    const digits = v.length - 1;
+    return !((digits === 4 || digits === 8) && v.slice(-2) === "00");
+  }
+  return COLOUR_NAMES[v.toLowerCase()] === 1;
+};
 const avColors = c => (Array.isArray(c) && c.length > 1
   && isColour(c[0]) && isColour(c[1])) ? c : AV_FALLBACK;
 /* The initials are a picture of the name beside them, and a screen reader read
@@ -1624,6 +1640,32 @@ function ccHead(tel, d) {
   const at = tel.indexOf(d);
   return at >= 1 && at <= 3 && tel.length - at >= 7;
 }
+/* The contact whose saved number IS the digits typed, looked up without walking
+   the book. findMatch() answers with the first contact that satisfies any of its
+   tests, so a number typed in full lost to whichever contact came earlier in the
+   address book and merely began or ended with those digits: with "Office" saved
+   as 2825551234 above "Local" saved as 5551234, typing 5551234 named Office —
+   and tapping the chip under the keypad dialled Office, a subscriber the user
+   never typed. An exact match cannot be ambiguous, so it is answered first.
+   The digits of a contact never change while the index stands, so they are
+   collected once per generation rather than scanned for on every keystroke;
+   contactGen moves whenever the book behind people[] can have changed, which is
+   the same guard findMatch()'s own answer is cached under. A number two
+   contacts share keeps the first, exactly as find() would have answered. */
+let exactForGen = -1, exactByDig = null;
+function exactMatch(d) {
+  if (exactForGen !== contactGen) {
+    exactForGen = contactGen;
+    exactByDig = new Map();
+    for (let i = 0; i < people.length; i++) {
+      const p = people[i];
+      if (!p) continue;
+      const t = telOf(p);
+      if (t && !exactByDig.has(t)) exactByDig.set(t, p);
+    }
+  }
+  return exactByDig.get(d) || null;
+}
 function findMatch() {
   if (value === matchForValue && contactGen === matchForGen) return matchFound;
   matchForValue = value;
@@ -1636,6 +1678,10 @@ function findMatch() {
   if (USSD_SYMBOL.test(value)) return (matchFound = null);
   const d = value.replace(FMT_NON_DIGIT, "");
   if (d.length < 3) return (matchFound = null);
+  /* a number typed in full names the contact saved under it, whatever else the
+     book holds — see exactMatch() above */
+  const exact = exactMatch(d);
+  if (exact) return (matchFound = exact);
   /* A fourth test used to sit here: lowerOf(p).startsWith(value.toLowerCase()).
      The keypad can only ever hold digits, "*", "#" and "+" — add(), the
      hardware-keyboard filter, Paste and __phoneNumber all strip everything else
