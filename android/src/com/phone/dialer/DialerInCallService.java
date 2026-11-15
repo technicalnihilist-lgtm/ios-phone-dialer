@@ -65,6 +65,18 @@ public class DialerInCallService extends InCallService {
      */
     private final Object liveLock = new Object();
 
+    /**
+     * Set under {@link #liveLock} by onDestroy(). A call is delivered on the
+     * telecom binder thread while onDestroy() runs on the main thread, and what
+     * matters there is the ordering, not only the visibility: an onCallAdded()
+     * that ran after onDestroy() had finished put a Call back into
+     * {@link #current} that nothing could control any more. The in-call screen
+     * then painted a caller whose every button returned early because
+     * {@link #instance} was null, and whose Back did nothing because current was
+     * not null — a screen with no way out but killing the app.
+     */
+    private boolean destroyed;
+
     /** Removes by identity — Call does not define equals(), and we want no surprises. */
     private boolean drop(Call call) {
         synchronized (liveLock) {
@@ -123,9 +135,16 @@ public class DialerInCallService extends InCallService {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        synchronized (liveLock) { live.clear(); }
+        synchronized (liveLock) {
+            destroyed = true;
+            live.clear();
+            /* cleared inside the same critical section onCallAdded() writes it
+               in: assigning it outside left the two threads free to interleave
+               so that a call arriving during teardown was published after this
+               line had run */
+            current = null;      /* was left pointing at a dead Call after the service died */
+        }
         instance = null;
-        current = null;          /* was left pointing at a dead Call after the service died */
         audioRoute = CallAudioState.ROUTE_EARPIECE;
         muted = false;           /* the line it described is gone with the service */
     }
@@ -147,9 +166,13 @@ public class DialerInCallService extends InCallService {
         /* a Set ignored a repeat add for free; a List would keep the duplicate and
            then hand it back as "the most recent call" after it had ended */
         synchronized (liveLock) {
+            /* the service is going away: this Call belongs to the instance
+               telecom binds next, which gets its own onCallAdded() for it */
+            if (destroyed) return;
             if (!live.contains(call)) live.add(call);
+            /* published in the same critical section onDestroy() clears it in */
+            current = call;
         }
-        current = call;
 
         String number = numberOf(call);
 

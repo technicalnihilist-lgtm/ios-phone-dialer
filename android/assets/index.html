@@ -1985,6 +1985,24 @@ const ESCAPE_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
 const decodeEscapes = s => s.replace(ESCAPE_RUN, seq => {
   try { return decodeURIComponent(seq); } catch (e) { return seq; }
 });
+/* A landline is printed with slashes as often as with hyphens — "022/2345/6789",
+   "080/2345 6789" — and a "/" is not a character DIAL_RUN accepts, so the clip
+   arrived as three separate runs and the first of them, "022", is a perfectly
+   valid three-digit number: it was pasted and dialled in place of the number
+   the user copied, which is a call to a stranger. Join a slash-separated
+   sequence into the one number it spells before the runs are read, and only
+   when it cannot be a date — a date is the one thing a clip holds that is
+   written with slashes, and isDate()/isDateTail() already answer that. */
+const SLASH_SEQ = /[\s(]*\d{1,5}(?:\/\d{1,5})+/g;
+const joinSlashes = line => line.replace(SLASH_SEQ, seq => {
+  /* "14/11/2024", "2024/11/14" and the same date with the time after it are
+     dates, and a sequence whose last group is too short to end a number
+     ("9876543210/11") is not one number either */
+  if (isDate(seq) || isDate(seq.replace(/\/\d+$/, ""))) return seq;
+  const groups = seq.replace(/^[\s(]+/, "").split("/");
+  if (groups[groups.length - 1].length < 3) return seq;
+  return digitsIn(seq) >= 7 ? seq.replace(/\//g, "-") : seq;
+});
 /* Whether a run of number characters is welded to a letter at one end — the
    numeric part of a word rather than a number standing on its own. "1-800-
    FLOWERS" is one token, and the run ends where the letters begin, so the run
@@ -2160,7 +2178,16 @@ function runPieces(text, wordHead) {
          fragment and keeps the number, which is what its own note above already
          says the clip should yield. */
       let tail = 0;
-      if (wordHead && p === 0 && start === 0 && digits >= 1 && digits < 7) {
+      /* ...and the head does not have to be welded to the word for that to be
+         true. The label in front of a number is very often followed by a space
+         — "build 3.4 9876543210", "rev 1.2 022-2345-6789" — and DIAL_RUN
+         accepts whitespace, so the run begins with that space, wordHead is
+         false and the branch below never ran: the label's digits were welded to
+         the number and the keypad held "349876543210", a stranger's number.
+         A head written with a dot in it is a version or a decimal wherever it
+         sits, so it counts here whether or not a letter touches it. */
+      if ((wordHead || before.indexOf(".") >= 0)
+          && p === 0 && start === 0 && digits >= 1 && digits < 7) {
         let j = i + 1;
         while (j < piece.length && piece.charAt(j) !== " " && piece.charAt(j) !== "\t") j++;
         tail = digitsIn(piece.slice(i, j));
@@ -2213,8 +2240,17 @@ function firstDialRun(s) {
          leave with every character they were written with. */
       let run = pieces[p].replace(RUN_JUNK, "");
       if (run.indexOf("*") >= 0) {
-        run = run.replace(/\*{2,}/g, "");
-        if (run.charAt(run.length - 1) === "*") {
+        /* Two kinds of run are not the emphasised text this block is written
+           for, and rewriting them changed a request the user pasted into a
+           different one: an MMI command — **21*<number># turns call forwarding
+           on, **61* and **67* do the same for the other destinations, **002#
+           cancels them all — opens with a doubled star and ends with a hash,
+           and the *#*#<code>#*#* family really does end with a star. Leave
+           both exactly as they were written; everything else is emphasis. */
+        const starCode = (run.slice(0, 2) === "**" && run.charAt(run.length - 1) === "#")
+          || run.slice(0, 4) === "*#*#";
+        if (!starCode) run = run.replace(/\*{2,}/g, "");
+        if (!starCode && run.charAt(run.length - 1) === "*") {
           /* "*123*" is an italic pair and both ends go, but a service code is
              not italic text: "*121#*" — a code wrapped in emphasis — lost its
              opening star here and arrived on the keypad as "121#", a different
@@ -2310,10 +2346,10 @@ function dialable(txt) {
      dialled as a single stranger's number, which is exactly the defect the
      tab above was fixed for, one character at a time. Ask one pattern for
      every line and field separator there is, so none can be missed again. */
-  if (!SEP_RE.test(s)) return firstDialRun(s);
+  if (!SEP_RE.test(s)) return firstDialRun(joinSlashes(s));
   const lines = s.split(SEP_RE);
   for (let i = 0; i < lines.length; i++) {
-    const run = firstDialRun(lines[i]);
+    const run = firstDialRun(joinSlashes(lines[i]));
     if (run) return run;
   }
   return "";
@@ -3633,13 +3669,24 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
        Take the event off the field first, so there is exactly one prompt per
        event, and treat a refusal as the end of the card. */
     prompt = null;
+    /* prompt() is specified to return a promise, and the refusal it carries —
+       the event was already used, the prompt is no longer allowed — arrives as
+       a rejection, not as a synchronous throw, so the catch below never saw it:
+       the card stayed up over an install that could not run and the rejection
+       went unhandled in the WebView log. The userChoice promise one line down
+       already takes both callbacks for exactly this reason; do the same for
+       the prompt itself. */
+    let res = null;
     try {
-      p.prompt();
+      res = p.prompt();
     } catch (err) {
       card.classList.remove("show");
       return;
     }
     const done = () => card.classList.remove("show");
+    if (res && typeof res.then === "function") {
+      try { res.then(null, done); } catch (err) { done(); }
+    }
     try { p.userChoice.then(done, done); } catch (err) { done(); }
   });
 })();

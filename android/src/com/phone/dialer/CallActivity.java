@@ -642,9 +642,17 @@ public class CallActivity extends Activity {
         if (!muted) return;
         DialerInCallService svc = DialerInCallService.instance;
         if (svc == null) return;
-        try { svc.setMuted(false); } catch (Exception ignored) { }
+        /* setMuted() is a binder call into telecom and throws when the request
+           is refused — the same failure toggleMute() and endCall() are written
+           to survive — and when it does, the line is still muted. The field was
+           written anyway, so the service claimed a muted line was not: the next
+           call came up muted behind a button that said "mute", and the first
+           tap on that button only put the label back instead of unmuting. Only
+           record what telecom actually accepted. */
+        boolean cleared = true;
+        try { svc.setMuted(false); } catch (Exception e) { cleared = false; }
         /* the service's copy is what a re-created screen reads back */
-        DialerInCallService.muted = false;
+        if (cleared) DialerInCallService.muted = false;
     }
 
     /** TextView.setText() always requests layout, even for the same string. */
