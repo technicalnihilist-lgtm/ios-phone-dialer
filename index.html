@@ -1273,9 +1273,19 @@ const COLOUR_NAMES = Object.create(null);
 const isColour = v => {
   if (typeof v !== "string") return false;
   if (COLOUR_RE.test(v)) {
-    /* the 4- and 8-digit forms end in an alpha pair; "00" is fully transparent */
+    /* Only the 8-digit form ends in an alpha *pair*; the 4-digit form
+       (#RGBA) ends in one alpha *digit*, and "00" is the wrong test for it.
+       "#abc0" — alpha 0, fully transparent — passed here and was written
+       straight into the avatar's --a, so the gradient painted nothing and the
+       circle was invisible: the exact defect this check exists to prevent,
+       for the shorter of the two spellings. "#0000" was refused only because
+       its last two characters happen to be "00". Read the alpha channel each
+       form actually has: the last digit of a 4-digit value, the last pair of
+       an 8-digit one. */
     const digits = v.length - 1;
-    return !((digits === 4 || digits === 8) && v.slice(-2) === "00");
+    if (digits === 4) return v.charAt(4) !== "0";
+    if (digits === 8) return v.slice(-2) !== "00";
+    return true;
   }
   return COLOUR_NAMES[v.toLowerCase()] === 1;
 };
@@ -3100,6 +3110,22 @@ function buildContactIdx() {
       } else slot.p = p;
     }
     keyBuf.length = 0;
+    /* ...and the exact-match map is the one cache this path leaves standing.
+       exactMatch() rebuilds it whenever contactGen moves, and the fast path
+       deliberately does not move it — the rows are the same rows — so the map
+       went on pointing at the *previous* generation's person objects for the
+       rest of the session: the whole address book, with the digits telOf()
+       cached on each of those objects, kept alive beside the new one. That is
+       exactly the retention shownRows and pickBuf above are dropped for, one
+       cache further along, and it is the only cache here that is keyed on a
+       generation the fast path does not advance. Drop it: the next contact
+       match rebuilds it from this generation, which is the single build it
+       does per generation anyway. The match cache beside it holds one person
+       and is left alone — one object is not an address book, and dropping it
+       would repaint the chip under the keypad for a match that has not
+       changed. */
+    exactForGen = -1;
+    exactByDig = null;
     return;
   }
   keyBuf.length = 0;
