@@ -1565,6 +1565,13 @@ const LATIN_MAP = {
   "ß": "ss", "ẞ": "SS"
 };
 const LATIN_ODD = /[øØłŁđĐðÐħĦıŋŊŧŦþÞæÆœŒßẞ]/g;
+/* The replacer handed to the LATIN_ODD pass was an arrow function written inside
+   fold(), so one closure was built for every name that fold() ran on — once per
+   contact on every hydrate, and once per keystroke in the search box — and
+   thrown away again immediately, exactly the defect escRepl was hoisted for.
+   The function is the same one every time; define it beside the table it
+   indexes. */
+const latinRepl = c => LATIN_MAP[c];
 const fold = s => {
   const t = String(s == null ? "" : s);
   if (!NON_ASCII.test(t)) return t;
@@ -1575,7 +1582,7 @@ const fold = s => {
   /* the two joiners are part of what is drawn, never of what is typed: a name
      holding a ZWNJ inside a conjunct could not be found by typing the letters
      around it, and the key is never displayed */
-  return out.replace(JOINERS, "").replace(LATIN_ODD, c => LATIN_MAP[c]);
+  return out.replace(JOINERS, "").replace(LATIN_ODD, latinRepl);
 };
 
 /* T9 lookup: match a contact by digits or by the letters on the keys */
@@ -2135,10 +2142,16 @@ const joinSlashes = line => line.replace(SLASH_SEQ, seq => {
    fragment too short to be a number on its own is dropped; "555-1234x89"
    keeps its seven digits and its extension. */
 const WORD_EDGE = /[A-Za-z]/;
+/* The two edge tests below were literals inside weldedRun(), which runs once for
+   every run of every line of every pasted clip — a fresh RegExp object for each
+   of them, on a path that already walks the whole clipboard. Hoisted beside the
+   pattern they are used with; both are only ever handed to test(). */
+const EDGE_LEAD = /^\s/;
+const EDGE_TRAIL = /\s$/;
 const weldedRun = (s, at, text) => {
   const end = at + text.length;
-  if (at > 0 && !/^\s/.test(text) && WORD_EDGE.test(s.charAt(at - 1))) return true;
-  return end < s.length && !/\s$/.test(text) && WORD_EDGE.test(s.charAt(end));
+  if (at > 0 && !EDGE_LEAD.test(text) && WORD_EDGE.test(s.charAt(at - 1))) return true;
+  return end < s.length && !EDGE_TRAIL.test(text) && WORD_EDGE.test(s.charAt(end));
 };
 /* The characters that cannot belong to a number, stripped from a run before its
    digits are counted. Written as a literal inside firstDialRun()'s scan loop, so
@@ -2147,6 +2160,22 @@ const weldedRun = (s, at, text) => {
    cleans. String.replace with a global regex resets lastIndex itself, so
    sharing it is safe, exactly as ESC_RE is. */
 const RUN_JUNK = /[^\d+*#]/g;
+/* The CLIR prefix — "#31#" in front of a number suppresses the caller's ID for
+   that call — which is the one leading "#" that is part of a dial string rather
+   than a reference number. Looked at by firstDialRun() alone. No `g` flag: it is
+   only ever handed to test(). */
+const CLIR_PREFIX = /^#31#(?=[0-9+])/;
+/* The same prefix on its own, as a head that a space follows — see runPieces().
+   The run it is cut from begins with whatever whitespace DIAL_RUN let in
+   ("Call #31# 9876543210 now" starts the run at the space), and that space is
+   stripped later by RUN_JUNK, so it is allowed here too. */
+const CLIR_HEAD = /^\s*#31#$/;
+/* The emphasis strip in firstDialRun(), hoisted out of the loop it sits in for
+   the reason RUN_JUNK above gives: a regex literal is a fresh RegExp object
+   every time it is evaluated, and this one was evaluated for every run of a
+   pasted clip that carried a star. String.replace with a global regex resets
+   lastIndex itself. */
+const STAR_RUN = /\*{2,}/g;
 /* One whitespace character, the set DIAL_RUN lets into a run. runPieces() cuts
    a run where one number ends and the next begins, and it only ever cut on the
    ASCII space and the tab — while DIAL_RUN accepts everything \s matches. So a
@@ -2414,8 +2443,16 @@ function runPieces(text, wordHead) {
            eleven- and a thirteen-digit number. */
         if (before.indexOf(".") >= 0) tail = Math.max(tail, digitsIn(piece.slice(i)));
       }
+      /* ...and a head that is exactly the CLIR prefix is not a finished code:
+         "#31# 9876543210" — the prefix written with a space before the number,
+         which is how it is printed on a card — split here into "#31#" and the
+         number, and firstDialRun() then answered with the prefix alone and
+         threw the number away. The "#" that ends this head introduces the
+         number rather than closing a code, so leave the run whole and let
+         firstDialRun() read the prefix and the digits together. */
       if ((!fours && digits >= 7 && digitsIn(piece.slice(i)) >= 7)
-          || (digits >= 1 && before.charAt(before.length - 1) === "#")
+          || (digits >= 1 && before.charAt(before.length - 1) === "#"
+              && !CLIR_HEAD.test(before))
           || tail >= 7) {
         out.push(before);
         start = i;
@@ -2483,7 +2520,7 @@ function firstDialRun(s) {
            both exactly as they were written; everything else is emphasis. */
         const starCode = (run.slice(0, 2) === "**" && run.charAt(run.length - 1) === "#")
           || run.slice(0, 4) === "*#*#";
-        if (!starCode) run = run.replace(/\*{2,}/g, "");
+        if (!starCode) run = run.replace(STAR_RUN, "");
         if (!starCode && run.charAt(run.length - 1) === "*") {
           /* "*123*" is an italic pair and both ends go, but a service code is
              not italic text: "*121#*" — a code wrapped in emphasis — lost its
@@ -2531,7 +2568,22 @@ function firstDialRun(s) {
          that does also closes with one. A leading "*" is deliberately left
          alone: a star code can be written either way, and nothing in the clip
          says which one this is. */
-      if (run.charAt(0) === "#" && run.charAt(run.length - 1) !== "#") continue;
+      /* ...but a leading "#" is not always a reference number. "#31#" is the
+         GSM prefix that suppresses the caller's ID for the call that follows
+         it — "#31#9876543210" is one dial string and the digits after the
+         prefix are the number — and the test below, written for "Order #12345
+         shipped", threw the whole run away with it: pasting a number written
+         with its CLIR prefix put nothing on the keypad at all, and the same
+         text with a space after the prefix pasted "#31#" alone and dropped
+         the number behind it. Typing either spelling on the keypad has always
+         worked — add() accepts "#" — and DialerActivity and handoff() both
+         carry a "#31#" tel: link through intact, so the Paste menu was the
+         one entry point that lost it. The prefix is the one standard spelling
+         that stands in front of a number, so accept a run that opens with it
+         and let the digit count below decide; every other leading "#" is
+         still refused exactly as before. */
+      if (run.charAt(0) === "#" && run.charAt(run.length - 1) !== "#"
+          && !CLIR_PREFIX.test(run)) continue;
       const code = (run.charAt(0) === "*" || run.charAt(0) === "#")
         && run.charAt(run.length - 1) === "#";
       if (digits >= 3 || (code && digits >= 1)) return run;
@@ -3592,14 +3644,13 @@ function stamp() {
    call it started could have ended. */
 let lastDial = "", lastDialAt = 0;
 const DIAL_REPEAT_MS = 1200;
-/* Four regex literals sat inside placeCall() and __phoneNumber(): the same
-   "everything that cannot belong to a number" class, the leading-plus strip and
-   the has-a-digit test, rebuilt every time a call is placed or a tel: link is
-   handed over. The junk class is shared by both entry points, which is the one
-   rule they have to agree on anyway. FMT_NON_DIGIT (the digits-only pass, also
-   used by the Recents de-duplication below) is hoisted with fmt(). */
+/* Three regex literals sat inside placeCall() and __phoneNumber(): the same
+   "everything that cannot belong to a number" class and the has-a-digit test,
+   rebuilt every time a call is placed or a tel: link is handed over. The junk
+   class is shared by both entry points, which is the one rule they have to
+   agree on anyway. FMT_NON_DIGIT (the digits-only pass, also used by the
+   Recents de-duplication below) is hoisted with fmt(). */
 const DIAL_JUNK = /[^\d+*#]/g;
-const PLUS_ALL = /\+/g;
 const HAS_DIGIT = /[0-9]/;
 
 function placeCall(number, name) {
@@ -3614,8 +3665,24 @@ function placeCall(number, name) {
      shift and "=" on a keyboard — in the middle of a number put it there too, and
      the number went to telecom as "tel:555+9": not a dialable number, so the call
      failed with "Could not start the call" while a row for it still went into
-     Recents. Keep the leading prefix, drop every other one. */
-  const d = (kept.charAt(0) === "+" ? "+" : "") + kept.replace(PLUS_ALL, "");
+     Recents. Keep the leading prefix, drop every other one.
+     ...except the one a star or hash code introduces. "**61*+919876543210#"
+     turns call forwarding on for an international number, and its "+" sits in
+     the same place as the stray one in "555+9", so it was stripped too: the
+     line showed the code exactly as it was typed and telecom was handed
+     "**61*919876543210#" — a different forwarding destination from the one on
+     screen, and the same for "*31#+91…". runPieces() already keeps that "+"
+     when the clip is pasted, so the two entry points disagreed about the same
+     string. Keep a "+" that follows the "*" or "#" introducing a code, and
+     drop only the ones that are neither the leading prefix nor that one. */
+  let d = "";
+  for (let i = 0; i < kept.length; i++) {
+    const c = kept.charAt(i);
+    if (c !== "+") { d += c; continue; }
+    if (i === 0) { d += c; continue; }
+    const prev = kept.charAt(i - 1);
+    if (prev === "*" || prev === "#") d += c;
+  }
   /* a value made only of "+", "*" or "#" is not a number: holding 0 until it
      inserted "+" and then tapping Call handed "tel:+" to the system dialer and
      left a "+" row in Recents. startCall() already refused this; the path that
