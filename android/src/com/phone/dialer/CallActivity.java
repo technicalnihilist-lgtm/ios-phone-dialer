@@ -192,7 +192,16 @@ public class CallActivity extends Activity {
                     a.clearMuteOnService();
                     a.muted = false;
                     a.setKeypadOpen(false);
-                    if (a.holdBtn != null) { a.holdBtn.setSelected(false); a.holdLabel.setText("hold"); }
+                    if (a.holdBtn != null) a.holdBtn.setSelected(false);
+                    /* setTextIfChanged(), not setText(): TextView.setText() always
+                       calls requestLayout(), and this label is written on every
+                       call transition even when it already reads "hold" — the
+                       same rule the status line and the speaker label above
+                       already follow. It also null-guards the label itself,
+                       which the hand-rolled "if (a.holdBtn != null)" test never
+                       did: that one guarded the ImageView and then wrote the
+                       TextView beside it. */
+                    setTextIfChanged(a.holdLabel, "hold");
                     /* ...and the description, which is what a screen reader
                        reads instead of the label. onNewIntent() resets both
                        together (see its own setDesc calls below); this path
@@ -204,7 +213,8 @@ public class CallActivity extends Activity {
                        before writing, so this costs nothing when the value is
                        already right. */
                     setDesc(a.holdBtn, "hold");
-                    if (a.muteBtn != null) { a.muteBtn.setSelected(false); a.muteLabel.setText("mute"); }
+                    if (a.muteBtn != null) a.muteBtn.setSelected(false);
+                    setTextIfChanged(a.muteLabel, "mute");
                     setDesc(a.muteBtn, "mute");
                     a.releaseRecorderOffThread();
                     /* The caller this screen is now showing also has to be the
@@ -291,7 +301,7 @@ public class CallActivity extends Activity {
            cleared. */
         muted = DialerInCallService.muted;
         if (muteBtn != null) muteBtn.setSelected(muted);
-        if (muteLabel != null) muteLabel.setText(muted ? "unmute" : "mute");
+        setTextIfChanged(muteLabel, muted ? "unmute" : "mute");
         setDesc(muteBtn, muted ? "unmute" : "mute");
 
         showCaller(getIntent() == null ? "" : getIntent().getStringExtra("number"));
@@ -513,9 +523,11 @@ public class CallActivity extends Activity {
            caller's screen was opening — so it takes the same off-thread path
            the end-of-call code already uses. */
         releaseRecorderOffThread();
-        if (holdBtn != null) { holdBtn.setSelected(false); holdLabel.setText("hold"); }
+        if (holdBtn != null) holdBtn.setSelected(false);
+        setTextIfChanged(holdLabel, "hold");
         setDesc(holdBtn, "hold");
-        if (muteBtn != null) { muteBtn.setSelected(false); muteLabel.setText("mute"); }
+        if (muteBtn != null) muteBtn.setSelected(false);
+        setTextIfChanged(muteLabel, "mute");
         setDesc(muteBtn, "mute");
         if (statusView != null) setTextIfChanged(statusView, "connecting…");
         showCaller(number);
@@ -542,7 +554,7 @@ public class CallActivity extends Activity {
         muted = next;
         DialerInCallService.muted = next;
         muteBtn.setSelected(muted);
-        muteLabel.setText(muted ? "unmute" : "mute");
+        setTextIfChanged(muteLabel, muted ? "unmute" : "mute");
         /* the button's own description is what a screen reader reads, and it
            still said "mute" over a muted line */
         setDesc(muteBtn, muted ? "unmute" : "mute");
@@ -588,7 +600,7 @@ public class CallActivity extends Activity {
             return;
         }
         speakerBtn.setSelected(next);
-        speakerLabel.setText(next ? "speaker on" : "speaker");
+        setTextIfChanged(speakerLabel, next ? "speaker on" : "speaker");
         setDesc(speakerBtn, next ? "speaker on" : "speaker");
     }
 
@@ -629,7 +641,7 @@ public class CallActivity extends Activity {
     private void setHoldUi(boolean held) {
         onHold = held;
         if (holdBtn != null) holdBtn.setSelected(held);
-        if (holdLabel != null) holdLabel.setText(held ? "resume" : "hold");
+        setTextIfChanged(holdLabel, held ? "resume" : "hold");
         setDesc(holdBtn, held ? "resume" : "hold");
     }
 
@@ -766,7 +778,7 @@ public class CallActivity extends Activity {
             recordFile = out;
             recording = true;
             recordBtn.setSelected(true);
-            recordLabel.setText("stop");
+            setTextIfChanged(recordLabel, "stop");
             setDesc(recordBtn, "stop recording");
             Toast.makeText(this, "Recording to " + out.getName(), Toast.LENGTH_SHORT).show();
         } catch (Throwable t) {
@@ -836,7 +848,7 @@ public class CallActivity extends Activity {
 
     private void resetRecordButton() {
         if (recordBtn != null) recordBtn.setSelected(false);
-        if (recordLabel != null) recordLabel.setText("record");
+        setTextIfChanged(recordLabel, "record");
         setDesc(recordBtn, "record");
     }
 

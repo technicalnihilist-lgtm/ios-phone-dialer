@@ -1361,11 +1361,21 @@ try {
   if (Array.isArray(stored)) {
     dialed = stored
       .filter(d => d && typeof d === "object" && typeof d.number === "string"
-        && DIALABLE_NUM.test(d.number))
+        && DIALABLE_NUM.test(d.number)
+        /* ...and a row with no time is not a call this list can draw. The
+           column on the right of every Recents row is the time, and this list
+           normalised a missing one to "" — which drew a row whose time cell was
+           empty: an avatar, a name, "mobile", and then nothing, on a screen
+           where every other row carries a clock. placeCall() has always written
+           when: stamp(), so a row without one is not something this page ever
+           wrote (an older or hand-edited value, or one a process died half way
+           through writing). Same rule as the number above: what is not a call
+           is dropped on the way in. */
+        && typeof d.when === "string" && d.when !== "")
       .map(d => ({
         number: d.number,
         name: typeof d.name === "string" && d.name ? d.name : d.number,
-        when: typeof d.when === "string" ? d.when : ""
+        when: d.when
       }))
       /* the write path keeps 40 rows but the read path took whatever it found,
          so one oversized or hand-edited value rebuilt thousands of rows */
