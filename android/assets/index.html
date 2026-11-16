@@ -1338,6 +1338,9 @@ const qEl = $("q"), contactsEl = $("contacts"), recentsEl = $("recents"),
       favsEl = $("favs"), deviceEl = $("device"), installEl = $("install"),
       vContactsEl = $("v-contacts"), vRecentsEl = $("v-recents");
 let value = "";
+/* How many characters the keypad holds. add() stops at this length, so it is
+   also the longest number this page can show or dial. */
+const KEYPAD_MAX = 20;
 
 /* call history, restored from storage before anything renders */
 /* A row this page writes always carries a digit: placeCall() refuses a value
@@ -1928,7 +1931,7 @@ function buzz(ms) {
   try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { }
 }
 function add(c) {
-  if (value.length >= 20) return;
+  if (value.length >= KEYPAD_MAX) return;
   value += c;
   render();
   bump();
@@ -2147,6 +2150,84 @@ const joinSlashes = line => line.replace(INVISIBLE, " ").replace(DASHES, "-")
   if (groups[groups.length - 1].length < 3) return seq;
   return digitsIn(seq) >= 7 ? seq.replace(/\//g, "-") : seq;
 });
+/* A date is not a number, and a date with the time of day after it is not one
+   either — but the tests above only ever looked at the date on its own, and a
+   clip holds the whole line. Three shapes got through, and each was dialled as
+   a stranger's number:
+     - "2024-11-14 10:30" — the date and the time are ONE run, because "-" and
+       the space are both characters DIAL_RUN accepts and ":" is not: the run
+       read as ten digits ("2024111410") and Call dialled it. The same line
+       written with dots or with slashes, and the day-first spellings, did it
+       too ("14-11-2024 10:30" -> "1411202410", "2024/11/14 10:30" -> "1410",
+       the date skipped and the two groups left over welded together);
+     - a year-first date that does not open the line: "Date: 2024/11/14",
+       "Invoice 2024/11/14", "(2024/11/14)", "log 2023/01/05 entry" all put the
+       bare year on the keypad and Call dialled 2024. The head-of-line test
+       below answers only for the position at index 0, and every one of these
+       has a label in front of it;
+     - a clock time, which is not a number in any spelling: "10:30-11:00" — a
+       meeting copied out of a chat — was read as the run "30-11" and dialled
+       "3011", and "9:30-10:00" as "3010". A time on its own ("10:30") is
+       already left alone, because its two groups are too short to be a number;
+       two of them either side of a dash are not.
+   A year on its own is the same defect in its plainest form: "2024-11" (a
+   month, a file name, a version) read as the six-digit number 202411.
+   Ask for each of these spans and blank it out before anything reads digits.
+   Blanked with spaces, of the same length, so a number either side of it keeps
+   the run boundaries it had. A span only counts where it stands alone — no
+   digit immediately before or after it — and only when it really is the thing
+   it looks like: isDate() has to agree that it is a date, a month has to be a
+   month and a year a year, so a longer number that happens to carry the same
+   punctuation ("12024-11-14", "2024-11-145", "1234:5678", "1999-2500") is
+   left exactly as it was. */
+const DATE_SPAN = /(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})(?:[\s,T]+\d{1,2}:\d{2}(?::\d{2})?)?/g;
+const TIME_SPAN = /\d{1,2}:\d{2}(?::\d{2})?/g;
+const MONTH_SPAN = /\d{4}[-/.]\d{1,2}/g;
+/* ...and the spelling that carries the month as a word, which is how half the
+   world writes a date in a message: "Nov 14, 2024", "14 November 2024",
+   "Jan 2nd 2025". Only the year was read as a number there — the day is one or
+   two digits and too short to be one — so a chat line pasted on the keypad put
+   2024 on it and Call dialled 2024. The month is a word, so nothing that is
+   part of a number can be caught by this; the day and the year are validated
+   (1..31, 1900..2099) before the span is blanked. */
+const NAMED_DATE = /\b(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?|(\d{1,2})(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?)[,\s]+(\d{4})\b/gi;
+/* The filler is a character no run accepts and no word edge is made of, not a
+   space: DIAL_RUN takes spaces, so blanking a span with them would leave the
+   number before it welded to the number after it ("00 12:00 98765" read as one
+   seven-digit run). One byte per blanked character keeps every index below
+   meaning what it did, and breaks the run where the span was. */
+const FILL = "\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001";
+const blank = n => n <= FILL.length ? FILL.slice(0, n) : FILL + blank(n - FILL.length);
+/* A span is only the thing it looks like when it is not part of a longer
+   number: one more digit on either side and it belongs to that number. */
+const standsAlone = (all, at, len) => {
+  const before = at > 0 ? all.charAt(at - 1) : "";
+  const after = all.charAt(at + len);
+  return !((before >= "0" && before <= "9") || (after >= "0" && after <= "9"));
+};
+const isYearMonth = m => {
+  const y = +m.slice(0, 4);
+  const mo = +m.slice(5);
+  return y >= 1900 && y <= 2099 && mo >= 1 && mo <= 12;
+};
+const maskDates = s => s.replace(DATE_SPAN, (m, date, at, all) =>
+    isDate(date) && standsAlone(all, at, m.length) ? blank(m.length) : m)
+  .replace(TIME_SPAN, (m, at, all) =>
+    standsAlone(all, at, m.length) ? blank(m.length) : m)
+  .replace(NAMED_DATE, (m, d1, d2, year, at, all) => {
+    const day = +(d1 || d2);
+    const y = +year;
+    return day >= 1 && day <= 31 && y >= 1900 && y <= 2099
+        && standsAlone(all, at, m.length) ? blank(m.length) : m;
+  })
+  .replace(MONTH_SPAN, (m, at, all) => {
+    /* ...and a month is the head of nothing else: "2024-11-145" is a number
+       with two dashes in it, not a month followed by a dash */
+    const after = all.charAt(at + m.length);
+    return isYearMonth(m) && standsAlone(all, at, m.length)
+        && after !== "-" && after !== "/" && after !== "."
+        ? blank(m.length) : m;
+  });
 /* Whether a run of number characters is welded to a letter at one end — the
    numeric part of a word rather than a number standing on its own. "1-800-
    FLOWERS" is one token, and the run ends where the letters begin, so the run
@@ -2166,10 +2247,21 @@ const WORD_EDGE = /[A-Za-z]/;
    pattern they are used with; both are only ever handed to test(). */
 const EDGE_LEAD = /^\s/;
 const EDGE_TRAIL = /\s$/;
+/* the last character of a run that could still be welded to the word after it */
+const DIGIT_END = /[0-9]/;
 const weldedRun = (s, at, text) => {
   const end = at + text.length;
   if (at > 0 && !EDGE_LEAD.test(text) && WORD_EDGE.test(s.charAt(at - 1))) return true;
-  return end < s.length && !EDGE_TRAIL.test(text) && WORD_EDGE.test(s.charAt(end));
+  /* ...but the tail is only a weld when the run actually ends on a digit. A run
+     can end on one of the other characters it accepts — "(", ")", "-", "#" —
+     and then the letter after it is the next word, not the rest of this one.
+     "(*123#)" and "*123# (mobile)" both end the run on "(" , and the letter
+     after that made the run look like the numeric part of a word: with fewer
+     than seven digits it was then thrown away, so a service code pasted with
+     the label people write beside it — "(mobile)", "(work)", "(Home)" — put
+     nothing on the keypad at all. */
+  return end < s.length && !EDGE_TRAIL.test(text) && DIGIT_END.test(text.charAt(text.length - 1))
+    && WORD_EDGE.test(s.charAt(end));
 };
 /* The characters that cannot belong to a number, stripped from a run before its
    digits are counted. Written as a literal inside firstDialRun()'s scan loop, so
@@ -2517,6 +2609,10 @@ function runPieces(text, wordHead) {
 }
 /* The first run in one line of text that holds three digits or more. */
 function firstDialRun(s) {
+  /* the date and time-of-day spans in this line are not numbers: blank them out
+     before anything reads a digit. See maskDates() — same length, so every index
+     below still means what it did. */
+  s = maskDates(s);
   DIAL_RUN.lastIndex = 0;
   let m;
   while ((m = DIAL_RUN.exec(s)) !== null) {
@@ -2563,16 +2659,22 @@ function firstDialRun(s) {
          before the digits are counted. "*121#", "*#06#" and "*123" arrive and
          leave with every character they were written with. */
       let run = piece.replace(RUN_JUNK, "");
+      /* Two kinds of run are not the emphasised text the block below is written
+         for, and rewriting them changed a request the user pasted into a
+         different one: an MMI command — **21*<number># turns call forwarding
+         on, **61* and **67* do the same for the other destinations, **002#
+         cancels them all — opens with a doubled star and ends with a hash,
+         and the *#*#<code>#*#* family really does end with a star. Leave both
+         exactly as they were written; everything else is emphasis.
+         Read once, here, because the fifteen-digit ceiling further down needs
+         the same answer: a carrier's forwarding code carries the service code,
+         the number and the timer as digits — "**61*+919876543210**30#" is
+         sixteen — so the ceiling, written for a number that is too long to be
+         one, threw the whole code away and Paste did nothing at all. A run that
+         opens with "**" or "*#*#" is a code, not a number. */
+      const starCode = (run.slice(0, 2) === "**" && run.charAt(run.length - 1) === "#")
+        || run.slice(0, 4) === "*#*#";
       if (run.indexOf("*") >= 0) {
-        /* Two kinds of run are not the emphasised text this block is written
-           for, and rewriting them changed a request the user pasted into a
-           different one: an MMI command — **21*<number># turns call forwarding
-           on, **61* and **67* do the same for the other destinations, **002#
-           cancels them all — opens with a doubled star and ends with a hash,
-           and the *#*#<code>#*#* family really does end with a star. Leave
-           both exactly as they were written; everything else is emphasis. */
-        const starCode = (run.slice(0, 2) === "**" && run.charAt(run.length - 1) === "#")
-          || run.slice(0, 4) === "*#*#";
         if (!starCode) run = run.replace(STAR_RUN, "");
         if (!starCode && run.charAt(run.length - 1) === "*") {
           /* "*123*" is an italic pair and both ends go, but a service code is
@@ -2599,8 +2701,11 @@ function firstDialRun(s) {
          IMEI, a row of digits out of a table. It used to be pasted anyway, cut
          to twenty characters by the caller and dialled as a stranger's number.
          Skip it and let a later run in the same clip be tried, exactly as a word
-         with one digit in it is skipped. */
-      if (digits > 15) continue;
+         with one digit in it is skipped. A service code is not a number and the
+         ceiling is not about it: "**61*+919876543210**30#" is a forwarding
+         code, and its sixteen digits are a service code, a number and a timer
+         (see starCode above). */
+      if (digits > 15 && !starCode) continue;
       /* the numeric fragment of a word, not a number — see weldedRun() */
       if (welded && digits < 7) continue;
       /* Three digits or more is what makes a run a number rather than a word
@@ -2699,7 +2804,15 @@ $("pasteBtn").addEventListener("click", () => {
      part that uses it is written once and handed to both */
   const use = txt => {
     const clean = dialable(txt);
-    if (clean) { value = clean.slice(0, 20); render(); }
+    /* ...and a clip that does not fit the keypad is not cut down to fit it.
+       An MMI command carries a service code, a number and a timer — "**61*+91
+       98765 43210**30#" is 23 characters — and its first twenty are a
+       different request sent to the network than the one the clip names: the
+       code lost its closing "#" and the timer after it. Leave the keypad as it
+       was instead, which is what a clip holding no number does. A number never
+       reaches this limit: fifteen digits is the longest E.164 allows and the
+       scan refuses anything longer. */
+    if (clean && clean.length <= KEYPAD_MAX) { value = clean; render(); }
   };
   let txt = "";
   /* navigator.clipboard is not implemented by the Android WebView, so inside the
@@ -4534,8 +4647,10 @@ window.__phoneNumber = function (n) {
   try { text = decodeURIComponent(text); } catch (e) { text = decodeEscapes(text); }
   /* "tel:123;ext=6" — the part after the semicolon is not the number, and its
      digits would otherwise end up on the end of it */
-  const clean = text.split(";")[0].replace(DIAL_JUNK, "").slice(0, 20);
-  if (!clean) return;
+  /* same rule as the Paste menu: a number or code that does not fit the keypad
+     is left out rather than cut to fit it — see the paste handler above */
+  const clean = text.split(";")[0].replace(DIAL_JUNK, "");
+  if (!clean || clean.length > KEYPAD_MAX) return;
   value = clean;
   /* A tel: link comes from outside this app — a message, a browser, a contact
      card — so nothing here can refuse it, and it can arrive at any moment,
