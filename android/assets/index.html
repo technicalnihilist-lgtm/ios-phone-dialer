@@ -2120,7 +2120,25 @@ const decodeEscapes = s => s.replace(ESCAPE_RUN, seq => {
    when it cannot be a date — a date is the one thing a clip holds that is
    written with slashes, and isDate()/isDateTail() already answer that. */
 const SLASH_SEQ = /[\s(]*\d{1,5}(?:\/\d{1,5})+/g;
-const joinSlashes = line => line.replace(SLASH_SEQ, seq => {
+/* ...and a hyphen is not the only character a number is printed with. A number
+   copied out of a web page, a PDF, a Word document, an email or a chat arrives
+   with whichever dash the typesetter used: an en dash ("1800–123–4567", which
+   is how a toll-free number is printed), an em dash, a figure dash, a minus
+   sign, a non-breaking hyphen, a small or fullwidth hyphen-minus. None of them
+   is a character DIAL_RUN accepts, so the clip was cut at the first one and its
+   leading group pasted on its own — "1800" instead of the number, a call to a
+   stranger, and "98765–43210" as a five-digit number. The same is true of the
+   characters that take up no room at all: a zero-width space, a word joiner, a
+   direction mark, a soft hyphen or a byte order mark inside a number copied out
+   of a chat split it in the same place. Both are answered the way the ASCII
+   spelling of each already was: a dash becomes the "-" that DIAL_RUN accepts
+   (and that isDate() reads as a date separator), and an invisible character
+   becomes the space that DIAL_RUN also accepts, which keeps two numbers that
+   happen to sit either side of one apart — "9876543210 9876543211" is still
+   two numbers, as it is when the space is a real one. */
+const DASHES = /[\u00ad\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g;
+const joinSlashes = line => line.replace(INVISIBLE, " ").replace(DASHES, "-")
+  .replace(SLASH_SEQ, seq => {
   /* "14/11/2024", "2024/11/14" and the same date with the time after it are
      dates, and a sequence whose last group is too short to end a number
      ("9876543210/11") is not one number either */
@@ -2320,10 +2338,31 @@ const DATE_DMY = /^[\s(]*(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})[\s).]*$/;
    number are untouched: a number written with a "/" keeps every group it has
    ("555/1234" is four runs and none of them is a year), and a number written
    with a "-" is a single run that never reaches this test. */
-const isDateTail = (s, at) => at > 1 && /^(?:19|20)\d\d$/.test(s.slice(at, at + 4))
-  && (s.charAt(at - 1) === "/" || s.charAt(at - 1) === "-" || s.charAt(at - 1) === ".")
-  && s.charAt(at - 2) >= "0" && s.charAt(at - 2) <= "9"
-  && (at + 4 >= s.length || !/[0-9]/.test(s.charAt(at + 4)));
+/* ...but the year does not always come last. A date is also written year
+   first — "2024/11/14", which is what a sortable date, a filename, a log line
+   and half the world's forms use — and with slashes that is three runs whose
+   FIRST is the year: "2024", "11", "14". The test below only asked about the
+   two characters *before* the four-digit group, and the first group of a line
+   has none, so the year was pasted on its own and Call dialled 2024. A year
+   that opens the string and is followed by a separator and a digit is the head
+   of a date; a bare "2024" with nothing after it is still the four-digit number
+   it looks like. The dash characters a date is written with, hoisted so the
+   test below carries no regex literal of its own. */
+const isSepCh = ch => ch === "/" || ch === "-" || ch === ".";
+const isDateTail = (s, at) => /^(?:19|20)\d\d$/.test(s.slice(at, at + 4))
+  && (at + 4 >= s.length
+      || !(s.charAt(at + 4) >= "0" && s.charAt(at + 4) <= "9"))
+  && ((at > 1 && isSepCh(s.charAt(at - 1))
+       && s.charAt(at - 2) >= "0" && s.charAt(at - 2) <= "9")
+      /* ...or it comes first, which is the one position the two characters
+         before it cannot answer for, because there are none: read the two that
+         follow it instead. Only a "/" counts here: a "-" and a "." are
+         characters DIAL_RUN accepts, so a year-first date written with either
+         is one run that isDate() already answers as a date, and cutting four
+         characters off that run would leave "11-14" behind to be dialled as
+         1114 — the very defect this test exists to prevent. */
+      || (at === 0 && s.charAt(4) === "/"
+          && s.charAt(5) >= "0" && s.charAt(5) <= "9"));
 function isDate(text) {
   const a = DATE_YMD.exec(text);
   if (a) {
@@ -2333,7 +2372,21 @@ function isDate(text) {
   const b = DATE_DMY.exec(text);
   if (b) {
     const d = +b[1], mo = +b[2], y = +b[3];
-    return y >= 1900 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+    if (y < 1900 || y > 2099) return false;
+    /* day first, the order most of the world writes a date in and the one the
+       two patterns above were written for */
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return true;
+    /* ...and month first, which is the order the United States writes one in
+       and the one every US-formatted form, receipt, web page and device
+       writes. Both spellings have the same shape, so the groups are only read
+       as (month, day) when (day, month) cannot be a date at all: "11/14/2024"
+       has no fourteenth month, so it was not a date by the test above, and it
+       is eight digits in which every character belongs to a number — pasting a
+       message that held it put "11142024" on the keypad and Call dialled it.
+       "31/12/2024" still reads day first, because no day-first date has a
+       thirty-first month either, and a spelling that is a real date in both
+       orders is a date either way. */
+    return d >= 1 && d <= 12 && mo >= 1 && mo <= 31;
   }
   return false;
 }
