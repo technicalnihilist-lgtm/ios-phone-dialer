@@ -71,6 +71,32 @@ if [ "$RDV" != "$VN $VC" ]; then
 fi
 echo "   version $VN ($VC) agrees with sw.js and README"
 
+# ...and the fourth number that has to agree is the one inside the APK the
+# repository publishes: apk/Phone-Dialer.apk, which is what a visitor to the
+# repository actually downloads and installs. Nothing has ever compared it with
+# the source it is supposed to have been built from, and it had drifted all the
+# way back to version 2.3 (versionCode 6) while this manifest went on to 2.6.77
+# (versionCode 104): ninety-eight releases of fixes that the download does not
+# contain, and a build the system refuses to install over the one already on the
+# device, because its versionCode is lower than the installed app's. A run that
+# cannot see the drift cannot report it, so read the file that ships.
+#
+# Not fatal: the unsigned path below (no signing key) cannot replace a signed
+# APK, so a machine without the release key would fail every build on a check it
+# is unable to satisfy. It is loud instead, and it names both versions.
+if [ -x "$BT/aapt2" ] && [ -f ../apk/Phone-Dialer.apk ]; then
+  PUBBAD=$("$BT/aapt2" dump badging ../apk/Phone-Dialer.apk 2>/dev/null | head -1 || true)
+  PUBVN=$(printf '%s\n' "$PUBBAD" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+  PUBVC=$(printf '%s\n' "$PUBBAD" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+  if [ -n "$PUBVN" ] && [ "$PUBVN" != "$VN" ]; then
+    echo "!! apk/Phone-Dialer.apk is $PUBVN (versionCode ${PUBVC:-?}), not $VN ($VC)"
+    echo "!! that is the APK the repository publishes and a user installs: it is behind this source"
+    echo "!! rebuild with the release key and commit the new apk/Phone-Dialer.apk with the release"
+  else
+    echo "   published apk/Phone-Dialer.apk is $VN (versionCode ${PUBVC:-?})"
+  fi
+fi
+
 rm -rf build && mkdir -p build/gen build/classes build/dex
 
 echo "== aapt2 compile"
