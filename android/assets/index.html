@@ -2180,9 +2180,44 @@ const joinSlashes = line => line.replace(INVISIBLE, " ").replace(DASHES, "-")
    month and a year a year, so a longer number that happens to carry the same
    punctuation ("12024-11-14", "2024-11-145", "1234:5678", "1999-2500") is
    left exactly as it was. */
-const DATE_SPAN = /(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})(?:[\s,T]+\d{1,2}:\d{2}(?::\d{2})?)?/g;
-const TIME_SPAN = /\d{1,2}:\d{2}(?::\d{2})?/g;
+/* ...and a timestamp's fractions of a second are part of it, not a number
+   beside it. "2024-11-14 10:30:00.123" — the spelling of every log line, of
+   every `Date` a page or an API prints, of every chat export — is blanked up to
+   the seconds by the two patterns below, and what was left was the run ".123":
+   three digits, so it passed the three-digit test and Paste put 123 on the
+   keypad. Call then dialled 123, a stranger's number, from a clip that holds no
+   number at all. The fraction only ever follows a time written with its
+   seconds, so it is answered with the span it belongs to. */
+const DATE_SPAN = /(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})(?:[\s,T]+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?/g;
+const TIME_SPAN = /\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?/g;
 const MONTH_SPAN = /\d{4}[-/.]\d{1,2}/g;
+/* The UTC offset of a timestamp is not a number either, and it was the piece of
+   one that survived every test above. An RFC 2822 date — the `Date:` header of
+   an email, the DTSTART of an exported calendar, the timestamp in front of
+   every log line — ends in one: "Tue, 14 Nov 2024 10:30:00 +0530". The date and
+   the time are blanked by the passes above, the offset is left standing, and
+   "+0530" is four digits that pass every test below: Paste put +0530 on the
+   keypad and Call dialled it. Spelled with a minus sign it is worse, not
+   better — "-0800" loses the sign to RUN_JUNK and becomes 0800, a perfectly
+   ordinary number that reaches a stranger.
+   An offset only counts where it follows a span that was just blanked, so a
+   number that opens with a "+" — "+919876543210", "+1 415 555 2671" — is
+   untouched, and so is a lone "+0530" that is not part of a timestamp: nothing
+   has been blanked in front of it, so this pass does not look at it. */
+const OFFSET_SPAN = /[+-]\d{2}:?\d{2}(?!\d)/g;
+/* A year range is not a number. "FY 2024-25 targets", "AY 2025-26", "batch
+   2024-2025", "session 2024-25" — a financial year, a school year, a batch, a
+   season — is two years joined by a dash, and the dash is a character DIAL_RUN
+   accepts, so the span was read as one run and Call dialled 202425, 202526 or
+   20242025: a stranger's number, out of a clip that holds no number at all. It
+   is the same defect the year-and-month above ("2024-11") was fixed for, one
+   group further along, and it is answered the same way: the first group has to
+   be a year (1900..2099) and the second has to be the year after it, two digits
+   or four. A number that happens to carry the same punctuation is left exactly
+   as it was — "022-2345-6789" and "1800-123-4567" open with a group that is
+   not a year, "2024-2512" does not end on the next year, and a span with a
+   digit on either side of it belongs to that longer number. */
+const YEAR_RANGE = /\d{4}([-/])(?:\d{4}|\d{2})(?!\d)/g;
 /* ...and the spelling that carries the month as a word, which is how half the
    world writes a date in a message: "Nov 14, 2024", "14 November 2024",
    "Jan 2nd 2025". Only the year was read as a number there — the day is one or
@@ -2210,10 +2245,29 @@ const isYearMonth = m => {
   const mo = +m.slice(5);
   return y >= 1900 && y <= 2099 && mo >= 1 && mo <= 12;
 };
+/* Whether the span at `at` sits directly after something a pass above has
+   already blanked — the only thing that makes a UTC offset part of a timestamp
+   rather than a number of its own. The filler is not whitespace, so the gap
+   between the seconds and the offset is stepped over by hand. */
+const followsBlank = (all, at) => {
+  let i = at - 1;
+  while (i >= 0 && WS_ONE.test(all.charAt(i))) i--;
+  return i >= 0 && all.charAt(i) === "\u0001";
+};
+const isYearRange = m => {
+  const a = +m.slice(0, 4);
+  if (a < 1900 || a > 2099) return false;
+  const tail = m.slice(5);
+  return tail.length === 2 ? +tail === (a + 1) % 100 : +tail === a + 1;
+};
 const maskDates = s => s.replace(DATE_SPAN, (m, date, at, all) =>
     isDate(date) && standsAlone(all, at, m.length) ? blank(m.length) : m)
   .replace(TIME_SPAN, (m, at, all) =>
     standsAlone(all, at, m.length) ? blank(m.length) : m)
+  .replace(OFFSET_SPAN, (m, at, all) =>
+    standsAlone(all, at, m.length) && followsBlank(all, at) ? blank(m.length) : m)
+  .replace(YEAR_RANGE, (m, sep, at, all) =>
+    isYearRange(m) && standsAlone(all, at, m.length) ? blank(m.length) : m)
   .replace(NAMED_DATE, (m, d1, d2, year, at, all) => {
     const day = +(d1 || d2);
     const y = +year;
