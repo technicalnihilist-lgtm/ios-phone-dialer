@@ -729,6 +729,13 @@ const ESC_RE = /[&<>"']/g;
    once beside the table it indexes. */
 const escRepl = c => ESC_MAP[c];
 const esc = v => String(v == null ? "" : v).replace(ESC_RE, escRepl);
+/* A tap's target is an Element for every real finger, but not for an event
+   dispatched on the document itself — assistive tech, automation, a synthetic
+   PointerEvent. closest() is then undefined and the handler threw a TypeError,
+   which killed the whole tap: the long-press menu and the glass sheet stayed
+   open because the outside-tap that closes them never finished. Ask whether the
+   target can answer closest() before asking it anything. */
+const inSel = (t, sel) => !!t && typeof t.closest === "function" && t.closest(sel);
 /* The characters that take up no room at all: a soft hyphen, a zero-width space,
    joiner or non-joiner, the direction marks, a word joiner and a byte order
    mark. A name copied out of a web page, a PDF or a chat carries them, and the
@@ -2095,7 +2102,7 @@ let pressT = null, pressX = 0, pressY = 0;
    the chip's own click, so the menu came up over a call nobody had finished
    asking for. Only the empty part of the area is a long-press target. */
 dialtop.addEventListener("pointerdown", e => {
-  if (e.target.closest("button")) return;
+  if (inSel(e.target, "button")) return;
   /* Only a primary press may start the long press. The tab bar already refuses
      anything else; this handler did not, so a right-click on the empty area
      above the keypad armed the timer and opened the Paste menu on a button the
@@ -2150,7 +2157,7 @@ function closeMenu() {
    really does close the menu costs exactly what it did before. */
 document.addEventListener("pointerdown", e => {
   if (!overlayMenu || !overlayMenu.classList.contains("show")) return;
-  if (!e.target.closest("#menu") && !e.target.closest("#dialtop")) closeMenu();
+  if (!inSel(e.target, "#menu") && !inSel(e.target, "#dialtop")) closeMenu();
 }, true);
 /* The clipboard holds text, not a number, and every character that was not a
    digit, a "+", a "*" or a "#" used to be deleted from the *whole* of it and
@@ -2843,12 +2850,45 @@ function firstDialRun(s, keepVanity) {
        holds. A run that is nothing but the year keeps skip 0 and is dropped by
        the test below, exactly as before. */
     const skip = (m[0].length > 4 && isDateTail(s, m.index)) ? 4 : 0;
-    const pieces = runPieces(m[0].slice(skip), wordHead);
+    /* A run longer than any phone number is two numbers written with a space
+       between them. "SIP 5000 9876543210" arrives as the one run
+       "5000 9876543210" — a space belongs to a run, and runPieces() only cuts
+       at one when the text before it reads like a word head or a reference,
+       which "5000" does not — so the digits were welded into
+       "50009876543210", a fourteen-digit string handed to telecom as a
+       stranger. Nor is it one number: a dialling string over twelve digits
+       with no leading "+" cannot be. Drop the head and judge the tail: the
+       first space whose left side is a short group (1..6 digits, and not a
+       trunk code written with a leading 0) and whose right side holds a
+       number (7 digits or more). "98765 43210", "022 2673 1234",
+       "1 800 555 1234" and "+91 98765 43210" are all untouched — they are
+       twelve digits or fewer, or they carry a "+". */
+    const rest = m[0].slice(skip);
+    let head = 0;
+    if (rest.indexOf("+") < 0 && digitsIn(rest) > 12) {
+      for (let i = 0; i < rest.length; i++) {
+        if (!WS_ONE.test(rest.charAt(i))) continue;
+        const left = rest.slice(0, i), right = rest.slice(i + 1);
+        const l = digitsIn(left), r = digitsIn(right);
+        if (l < 1 || l > 6 || r < 7) continue;
+        /* the first digit of the group: a trunk code ("022", "011") starts
+           with a 0 and is the head of the number, not a quantity before it */
+        let first = "";
+        for (let k = 0; k < left.length; k++) {
+          const c = left.charAt(k);
+          if (c >= "0" && c <= "9") { first = c; break; }
+        }
+        if (first === "0") continue;
+        head = i + 1;
+        break;
+      }
+    }
+    const pieces = runPieces(m[0].slice(skip + head), wordHead);
     /* the pieces are contiguous slices of the run, in order, so the position
        each one starts at can be followed rather than searched for: the two
        tests below read the characters *around* a piece, and they need the
        piece's own place in the line, not the run's */
-    let at = m.index + skip;
+    let at = m.index + skip + head;
     for (let p = 0; p < pieces.length; p++) {
       const piece = pieces[p];
       const from = at;
@@ -4013,9 +4053,9 @@ $("voicemail").innerHTML = vmRows.length ? vmRows.map(v => {
 
 /* tapping a person starts a call, exactly like the real app */
 document.addEventListener("click", e => {
-  const row = e.target.closest("[data-tel]");
+  const row = inSel(e.target, "[data-tel]");
   if (!row) return;
-  if (e.target.closest(".info")) return;
+  if (inSel(e.target, ".info")) return;
   placeCall(row.dataset.tel, row.dataset.name);
 });
 matchEl.addEventListener("click", () => {
@@ -4656,7 +4696,7 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   gear.addEventListener("click", () => open(!sheet.classList.contains("show")));
   $("gsDone").addEventListener("click", () => open(false));
   document.addEventListener("pointerdown", e => {
-    if (sheet.classList.contains("show") && !e.target.closest("#gsheet") && !e.target.closest("#gear") && !e.target.closest("#tabbar")) open(false);
+    if (sheet.classList.contains("show") && !inSel(e.target, "#gsheet") && !inSel(e.target, "#gear") && !inSel(e.target, "#tabbar")) open(false);
   }, true);
   /* Escape used to call open(false) unconditionally, so every Escape press
      buzzed the phone even with the sheet already closed */
