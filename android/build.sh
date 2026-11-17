@@ -57,6 +57,15 @@ VN=$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' AndroidManifest.xml | h
 VC=$(sed -n 's/.*android:versionCode="\([^"]*\)".*/\1/p' AndroidManifest.xml | head -1)
 SWC=$(sed -n 's/^const CACHE = "phone-\([^"]*\)";.*/\1/p' ../sw.js | head -1)
 RDV=$(sed -n 's/^| Version | \([^ ]*\) (versionCode \([0-9]*\)) |$/\1 \2/p' ../README.md | head -1)
+# ...and the store-metadata table above is not the only place in README.md that
+# carries this release's two numbers. The Notes section states them again, in
+# the paragraph that explains why the published APK lags the source ("the
+# source is at 2.6.79 (versionCode 106)"). Only the table was ever compared, so
+# a release that bumped the manifest, sw.js and the table but not that sentence
+# shipped a README that contradicted itself — the table naming one version and
+# the paragraph beside it naming the previous one — and nothing failed, which is
+# the same drift this whole block exists to make impossible. Read it too.
+RDN=$(sed -n 's/.*the source is at \([^ ]*\) (versionCode \([0-9]*\)).*/\1 \2/p' ../README.md | head -1)
 if [ -z "$VN" ] || [ -z "$VC" ]; then
   echo "!! no versionCode/versionName in AndroidManifest.xml"
   exit 1
@@ -69,7 +78,12 @@ if [ "$RDV" != "$VN $VC" ]; then
   echo "!! README advertises '${RDV:-<none>}' but this build is $VN (versionCode $VC)"
   exit 1
 fi
-echo "   version $VN ($VC) agrees with sw.js and README"
+if [ "$RDN" != "$VN $VC" ]; then
+  echo "!! the README note says the source is at '${RDN:-<none>}' but this build is $VN (versionCode $VC)"
+  echo "!! update the 'the source is at ...' sentence in README.md's Notes section with the version"
+  exit 1
+fi
+echo "   version $VN ($VC) agrees with sw.js and README (table and note)"
 
 # ...and the fourth number that has to agree is the one inside the APK the
 # repository publishes: apk/Phone-Dialer.apk, which is what a visitor to the
