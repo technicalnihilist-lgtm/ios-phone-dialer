@@ -2223,7 +2223,24 @@ const SLASH_ALL = /\//g;
    happen to sit either side of one apart — "9876543210 9876543211" is still
    two numbers, as it is when the space is a real one. */
 const DASHES = /[\u00ad\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g;
+/* The trunk "0" a number is printed with inside its country code — "+91 (0)
+   98765 43210" on an Indian card, "+44 (0) 20 7946 0958" on a British one — is
+   not a digit of the number, it is the prefix the *local* form of the same
+   number starts with. It was kept: the clip dialled +9109876543210 and
+   +4402079460958, a longer number than the one printed and one no network
+   accepts, so the paste produced a call that could not be placed instead of the
+   number it named. Drop the bracketed zero and keep what is around it. Only a
+   bracketed zero that follows a digit is this — the country code in front of it
+   — because the bracketed group at the head of a number is its area code and
+   holds three digits ("(022) 2345 6789"), never one. */
+/* ...and the space after it is kept, so the digits either side stay in the
+   groups they were printed in: "+44 (0)20 7946 0958" is "+44 20 7946 0958", not
+   "+4420 7946 0958" — which is twelve digits in three groups of four, the shape
+   the Aadhaar/IMEI rule below refuses, so the number would have been dropped
+   entirely instead of dialled. */
+const TRUNK = /(\d)[\s]*\([\s]*0[\s]*\)[\s]*/g;
 const joinSlashes = line => line.replace(INVISIBLE, " ").replace(DASHES, "-")
+  .replace(TRUNK, "$1 ")
   .replace(SLASH_SEQ, seq => {
   /* "14/11/2024", "2024/11/14" and the same date with the time after it are
      dates, and a sequence whose last group is too short to end a number
@@ -2813,6 +2830,47 @@ function runPieces(text, wordHead) {
   }
   return out;
 }
+/* A short digit group that follows a whole number is an annotation, not part of
+   it. "Ph 9876543210 (9am-6pm)", "022-2345-6789 (10-6)", "9876543210 (2)",
+   "9876543210 2nd floor" — the opening hours, a branch number, a floor, which is
+   what a business card, a shop's message and a chat line carry after the number
+   — put a note behind it, and a note that opens with a digit sits *inside* the
+   run: a "(" and a "-" are characters a run accepts, so the note's digits were
+   welded onto the number. Each of the four clips above dialled a number that is
+   not in the text — 98765432109, 02223456789106, 98765432102, 98765432102 —
+   because the digits of the note were counted as part of it.
+   A space whose left side ends a group of five digits or more, with one to three
+   digits after it, is that note. No telephone number ends on a group that short
+   once a longer one has been read: "080 2345 6789" ends on four, "1 800 555
+   1234" on four, "+91 98765 43210" on five — which is why the test is "five or
+   more before the space" and "three or fewer after it" — while a number written
+   two digits at a time ("06 12 34 56 78", the way half of Europe writes one)
+   has "56" in front of its last space and is left exactly as it was. The note is
+   dropped, and the number in front of it is kept, which is what the clip holds. */
+function noteTail(run, weldedTail) {
+  const total = digitsIn(run);
+  let cut = -1;
+  for (let i = 0; i < run.length; i++) {
+    const c = run.charCodeAt(i);
+    if (c !== 0x20 && c !== 0x09) continue;
+    const tail = run.slice(i + 1);
+    const d = digitsIn(tail);
+    /* a number's own last group is longer than this — "080 2345 6789" ends on
+       four, "+91 98765 43210" on five, and the spaces inside one come before
+       them all */
+    if (d < 1 || d > 3) continue;
+    const head = tail.charAt(0);
+    /* what is left has to be a note and not the number's own tail: it opens
+       with a bracket, a dash, a hash or a star, or it is welded to the word
+       after it ("2nd", "9am"), or the two halves together are longer than any
+       dialling string ("9876543210 022" is thirteen digits) — a number written
+       two digits at a time ("06 12 34 56 78") is none of these and is kept
+       whole. */
+    if (head === "(" || head === "#" || head === "*" || head === "-" || head === "."
+        || weldedTail || total > 12) cut = i;
+  }
+  return cut;
+}
 /* The first run in one line of text that holds three digits or more.
    `keepVanity` is what tells it whether a vanity fragment may be the answer —
    see the fallback below. dialable() asks for a real number first, across every
@@ -2831,14 +2889,19 @@ function firstDialRun(s, keepVanity) {
      See weldedRun(), which returns 2 for exactly this kind of fragment. */
   let fallback = "";
   while ((m = DIAL_RUN.exec(s)) !== null) {
+    /* the run with the annotation a note welded onto its end cut off — see
+       noteTail(). Only a suffix goes, so every position below still means what
+       it did. */
     const welded = weldedRun(s, m.index, m[0]);
+    const note = noteTail(m[0], welded >= 2);
+    const run0 = note > 0 ? m[0].slice(0, note) : m[0];
     /* whether this run begins inside a word — a letter straight before it, with
        no space between them. See runPieces(), which needs to know: the digits a
        word ends with are not the beginning of the number after it. */
     /* EDGE_LEAD, not a literal of its own: the same pattern, already hoisted
        beside the run tests below, and this line is reached for every run of
        every pasted line */
-    const wordHead = m.index > 0 && !EDGE_LEAD.test(m[0])
+    const wordHead = m.index > 0 && !EDGE_LEAD.test(run0)
       && WORD_EDGE.test(s.charAt(m.index - 1));
     /* A run can begin with the year of a slash-written date and carry the
        number after it, because a space belongs to a run: "14/11/2024
@@ -2849,7 +2912,7 @@ function firstDialRun(s, keepVanity) {
        named it; step over them and judge the rest of the run as the number it
        holds. A run that is nothing but the year keeps skip 0 and is dropped by
        the test below, exactly as before. */
-    const skip = (m[0].length > 4 && isDateTail(s, m.index)) ? 4 : 0;
+    const skip = (run0.length > 4 && isDateTail(s, m.index)) ? 4 : 0;
     /* A run longer than any phone number is two numbers written with a space
        between them. "SIP 5000 9876543210" arrives as the one run
        "5000 9876543210" — a space belongs to a run, and runPieces() only cuts
@@ -2863,7 +2926,7 @@ function firstDialRun(s, keepVanity) {
        number (7 digits or more). "98765 43210", "022 2673 1234",
        "1 800 555 1234" and "+91 98765 43210" are all untouched — they are
        twelve digits or fewer, or they carry a "+". */
-    const rest = m[0].slice(skip);
+    const rest = run0.slice(skip);
     let head = 0;
     if (rest.indexOf("+") < 0 && digitsIn(rest) > 12) {
       for (let i = 0; i < rest.length; i++) {
@@ -2883,7 +2946,7 @@ function firstDialRun(s, keepVanity) {
         break;
       }
     }
-    const pieces = runPieces(m[0].slice(skip + head), wordHead);
+    const pieces = runPieces(run0.slice(skip + head), wordHead);
     /* the pieces are contiguous slices of the run, in order, so the position
        each one starts at can be followed rather than searched for: the two
        tests below read the characters *around* a piece, and they need the
@@ -3029,6 +3092,24 @@ function firstDialRun(s, keepVanity) {
   }
   return fallback;
 }
+/* Every line and field separator there is, except the tab: what joinTabs()
+   counts the digits either side of one against. */
+const SEP_NO_TAB = /[\r\n\v\f\u0085\u2028\u2029]/;
+/* A tab is a field separator — a column of numbers lifted out of a spreadsheet
+   is one number per cell — but it is also a character that sits inside one
+   number: "Tel:\t98765\t43210", a number copied out of a table or a PDF, arrived
+   on the keypad as "98765", and "080\t2345 6789" as "080" — three digits of a
+   stranger, dialled as a number of their own. Join a tab when what is on both
+   sides of it, on its own line, adds up to no more than a dialling string can
+   hold; two whole numbers side by side ("555-1234\t987-6543" is fourteen
+   digits) add up to more and stay two fields, which is what the split below is
+   for. */
+const joinTabs = s => s.indexOf("\t") < 0 ? s : s.replace(/\t/g, (m, at, all) => {
+  let a = at, b = at + 1;
+  while (a > 0 && !SEP_NO_TAB.test(all.charAt(a - 1))) a--;
+  while (b < all.length && !SEP_NO_TAB.test(all.charAt(b))) b++;
+  return digitsIn(all.slice(a, at)) + digitsIn(all.slice(at + 1, b)) <= 12 ? " " : "\t";
+});
 function dialable(txt) {
   /* The clipboard is the one place this page is handed text it did not build,
      and a number copied off a web page or out of a chat very often arrives as
@@ -3070,6 +3151,7 @@ function dialable(txt) {
      dialled as a single stranger's number, which is exactly the defect the
      tab above was fixed for, one character at a time. Ask one pattern for
      every line and field separator there is, so none can be missed again. */
+  s = joinTabs(s);
   if (!SEP_RE.test(s)) return firstDialRun(joinSlashes(s), true);
   const lines = s.split(SEP_RE);
   /* Every line is asked for a real number before any line is asked for the
@@ -4955,7 +5037,13 @@ window.__phoneNumber = function (n) {
      digits would otherwise end up on the end of it */
   /* same rule as the Paste menu: a number or code that does not fit the keypad
      is left out rather than cut to fit it — see the paste handler above */
-  const clean = text.split(";")[0].replace(DIAL_JUNK, "");
+  /* ...and the trunk "0" a number is printed with inside its country code —
+     "+91 (0) 98765 43210" — is not a digit of it. The Paste menu drops it (see
+     TRUNK), and this path kept it: the same number pasted onto the keypad and
+     tapped in a link produced two different strings, and the one from the link
+     — "+9109876543210" — is a number no network accepts. One rule for both
+     entry points, exactly as the "#" and the escapes above are. */
+  const clean = text.replace(TRUNK, "$1 ").split(";")[0].replace(DIAL_JUNK, "");
   if (!clean || clean.length > KEYPAD_MAX) return;
   value = clean;
   /* A tel: link comes from outside this app — a message, a browser, a contact
