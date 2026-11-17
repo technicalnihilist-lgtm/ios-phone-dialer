@@ -781,6 +781,17 @@ const esc = v => String(v == null ? "" : v).replace(ESC_RE, escRepl);
    marks that belong to the glyph in front of them. */
 const INVISIBLE = /[\u0000-\u0008\u000e-\u001f\u007f-\u0084\u0086-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff0-\ufff8]/g;
 const JOINERS = /[\u200c\u200d]/g;
+/* A string made of nothing but those two joiners. They are deliberately left
+   out of INVISIBLE — they carry no shape of their own but they do change the
+   one drawn around them — so normSpace() keeps them, and every test on this
+   page that asks "is there anything here to draw?" answered yes for a name
+   that is one joiner and nothing else. A name arrives like that from a vCard
+   written by a sync adapter that lost the text but kept the direction mark, or
+   from a keyboard that wrote a ZWNJ and nothing else; the row was then drawn
+   with an invisible title over a real number, filed under "#", with a search
+   key of nothing, so no query could ever find it. This is the one test that
+   answers it without touching a name that really does have a character. */
+const ONLY_JOINERS = /^[\u200c\u200d]+$/;
 /* The astral half of the same set — the tag block, the shorthand format
    characters and the musical symbol format controls. A character class cannot
    hold a surrogate pair without the `u` flag, and the WebView this page has to
@@ -1146,8 +1157,24 @@ const firstCodePoint = s => {
      out of a page or a chat, or typed on a Devanagari keyboard, which writes a
      ZWNJ after a virama to ask for the explicit halant form: "क्\u200c रवि"
      began with a cluster that was "क्\u200c" rather than "क्". */
-  const last = i > 1 ? s.charCodeAt(i - 1) : 0;
-  return (last === 0x200d || last === 0x200c) ? s.slice(0, i - 1) : s.slice(0, i);
+  /* ...but only the last one was ever dropped, and a name can carry a *run* of
+     them: a token copied out of a page or a chat, or a keyboard that writes a
+     ZWNJ after one virama and again after the next, arrives as two joiners in
+     a row. The walk above takes every one of them (both are Extend), so the
+     cut came back with all but the last still inside it —
+     firstCodePoint("R\u200d\u200d") answered "R\u200d" rather than "R" — and
+     initials() then joined the two initials with the leftover invisible
+     character *between* them, which is the exact defect the two notes above
+     were written to prevent, one character further along. Walk back over the
+     whole run; a joiner that really did join a glyph is in the middle of the
+     cluster and is never touched by this. */
+  let end = i;
+  while (end > 1) {
+    const c = s.charCodeAt(end - 1);
+    if (c !== 0x200d && c !== 0x200c) break;
+    end--;
+  }
+  return s.slice(0, end);
 };
 /* The header a row is filed under. The list is ordered by the collator on the
    folded name, so the header has to name the character the row is actually
@@ -2133,6 +2160,15 @@ const decodeEscapes = s => s.replace(ESCAPE_RUN, seq => {
    when it cannot be a date — a date is the one thing a clip holds that is
    written with slashes, and isDate()/isDateTail() already answer that. */
 const SLASH_SEQ = /[\s(]*\d{1,5}(?:\/\d{1,5})+/g;
+/* The three patterns joinSlashes() used to build inside the replacer it hands
+   to that pass — a fresh RegExp object for every slash-separated sequence of
+   every line of every pasted clip. Hoisted beside the pattern they are used
+   with, the way every other pattern in this scanner already is. Only SLASH_ALL
+   carries /g, and it is only ever handed to replace(), which resets lastIndex
+   itself. */
+const SLASH_TAIL = /\/\d+$/;      /* the last group, which is not part of a date */
+const LEAD_JUNK = /^[\s(]+/;      /* the bracket or space a sequence is written with */
+const SLASH_ALL = /\//g;
 /* ...and a hyphen is not the only character a number is printed with. A number
    copied out of a web page, a PDF, a Word document, an email or a chat arrives
    with whichever dash the typesetter used: an en dash ("1800–123–4567", which
@@ -2155,10 +2191,10 @@ const joinSlashes = line => line.replace(INVISIBLE, " ").replace(DASHES, "-")
   /* "14/11/2024", "2024/11/14" and the same date with the time after it are
      dates, and a sequence whose last group is too short to end a number
      ("9876543210/11") is not one number either */
-  if (isDate(seq) || isDate(seq.replace(/\/\d+$/, ""))) return seq;
-  const groups = seq.replace(/^[\s(]+/, "").split("/");
+  if (isDate(seq) || isDate(seq.replace(SLASH_TAIL, ""))) return seq;
+  const groups = seq.replace(LEAD_JUNK, "").split("/");
   if (groups[groups.length - 1].length < 3) return seq;
-  return digitsIn(seq) >= 7 ? seq.replace(/\//g, "-") : seq;
+  return digitsIn(seq) >= 7 ? seq.replace(SLASH_ALL, "-") : seq;
 });
 /* A date is not a number, and a date with the time of day after it is not one
    either — but the tests above only ever looked at the date on its own, and a
@@ -2558,7 +2594,12 @@ const DATE_DMY = /^[\s(]*(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})[\s).]*$/;
    it looks like. The dash characters a date is written with, hoisted so the
    test below carries no regex literal of its own. */
 const isSepCh = ch => ch === "/" || ch === "-" || ch === ".";
-const isDateTail = (s, at) => /^(?:19|20)\d\d$/.test(s.slice(at, at + 4))
+/* The four-digit year itself, hoisted for the reason the separator test above
+   it was: this is asked of every piece of every run of every pasted line, and a
+   regex literal is a fresh RegExp object each time it is evaluated. No `g`
+   flag: test() only. */
+const YEAR_ONLY = /^(?:19|20)\d\d$/;
+const isDateTail = (s, at) => YEAR_ONLY.test(s.slice(at, at + 4))
   && (at + 4 >= s.length
       || !(s.charAt(at + 4) >= "0" && s.charAt(at + 4) <= "9"))
   && ((at > 1 && isSepCh(s.charAt(at - 1))
@@ -2757,7 +2798,10 @@ function firstDialRun(s, keepVanity) {
     /* whether this run begins inside a word — a letter straight before it, with
        no space between them. See runPieces(), which needs to know: the digits a
        word ends with are not the beginning of the number after it. */
-    const wordHead = m.index > 0 && !/^\s/.test(m[0])
+    /* EDGE_LEAD, not a literal of its own: the same pattern, already hoisted
+       beside the run tests below, and this line is reached for every run of
+       every pasted line */
+    const wordHead = m.index > 0 && !EDGE_LEAD.test(m[0])
       && WORD_EDGE.test(s.charAt(m.index - 1));
     /* A run can begin with the year of a slash-written date and carry the
        number after it, because a space belongs to a run: "14/11/2024
@@ -3276,8 +3320,15 @@ function renderFavs() {
            stored as "\u200bRavi" passed the test on "Ravi" and then drew the
            zero-width space in front of it — the same rule the rest of this page
            keeps, one line below the test that keeps it */
+        /* ...and a word made only of the joiners normSpace() deliberately keeps
+           draws nothing at all: a name copied out of a page that ended its
+           first token with a zero-width joiner — "\u200d Ravi Kumar" — kept
+           that joiner as its first word, so the tile drew the avatar over a
+           name line with nothing on it while the same person's row in Contacts
+           read "Ravi Kumar". Take the first word that has a character to draw,
+           which is the rule this loop already states. */
         const word = normSpace(words[w]);
-        if (word) { first = word; break; }
+        if (word && !ONLY_JOINERS.test(word)) { first = word; break; }
       }
       return `<button class="fav" data-tel="${esc(p.t)}" data-name="${esc(p.n)}">${avHTML(p)}<b>${esc(first)}</b><small>mobile</small></button>`;
     }).join("");
@@ -4668,7 +4719,15 @@ function hydrateNative(logOnly) {
          is the defect this whole block exists to prevent, one line below the
          test that prevents it. For every ordinary number the two answer the
          same string. */
-      if (p.n == null || !normSpace(p.n)) p.n = normSpace(tel);
+      /* ...and a name that is nothing but joiners is not a name either: they
+         are not whitespace, so trim() and normSpace() both keep them, and the
+         row was drawn with an invisible title over a real number, filed under
+         "#", with a search key of nothing — the same defect the blank-name
+         case above was fixed for, on the one pair of characters that table
+         deliberately leaves in place. The name is normalised once here and
+         asked both questions, so a full read costs no more than it did. */
+      const shown = p.n == null ? "" : normSpace(p.n);
+      if (!shown || ONLY_JOINERS.test(shown)) p.n = normSpace(tel);
       people.push(p);
     });
   }
@@ -4695,7 +4754,9 @@ function hydrateNative(logOnly) {
       /* same as the contacts list above: normSpace(), not trim(), or the
          fallback title keeps the characters with no shape that the test just
          rejected the name for */
-      if (p.n == null || !normSpace(p.n)) p.n = normSpace(p.t);
+      /* same as the contacts list above, joiners included */
+      const shownName = p.n == null ? "" : normSpace(p.n);
+      if (!shownName || ONLY_JOINERS.test(shownName)) p.n = normSpace(p.t);
       recents.push(r);
     });
     /* The local dialled list only covers calls made since the last read, but it
