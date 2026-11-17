@@ -807,6 +807,35 @@ const noGlyph = cp => cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)
    carries lastIndex from one test() to the next, so the two cannot share an
    object. Built from INVISIBLE's own source, so the two can never drift apart. */
 const INVISIBLE_ONE = new RegExp(INVISIBLE.source);
+/* The whitespace normaliser, declared up here beside the table it reads.
+   It used to sit a thousand lines below this point, and the local call history
+   — restored from storage in between, by the block that reads phone.dialed —
+   was therefore the one entry point on this page that could not ask it
+   anything. Every other name that reaches a row goes through it; see the note
+   on that restore for what the exception cost. Nothing between here and its
+   old place used any of the three, so this is a move and not a change.
+   The two replaces it runs are the expensive part, and hydrateNative() calls it
+   for a contact's number and again for its name while buildContactIdx() calls
+   it a third time, so a 3000-contact book paid three global regex passes per
+   contact — eighteen thousand of them — on the main thread before the first
+   list could be drawn. A string with nothing to normalise comes back exactly
+   as it is, and that is nearly every name and every number a device hands
+   over: only a string that is not plain printable ASCII (a non-breaking space,
+   a tab, an accent, a zero-width character) or one with a leading, trailing or
+   doubled space needs the work, and one test answers all of it. The pattern
+   carries no /g flag, so test() cannot leave a lastIndex behind for the next
+   call to start from. The collapse pattern is hoisted beside it for the same
+   reason: a regex literal in the function compiled the same pattern again on
+   every call, and it is only ever handed to replace(), which resets lastIndex
+   itself. */
+const NEEDS_NORM = /[^\x20-\x7e]|^\s|\s$|\s\s/;
+const WS_RUN = /\s+/g;
+const normSpace = s => {
+  const t = String(s == null ? "" : s);
+  return t && NEEDS_NORM.test(t)
+    ? t.replace(INVISIBLE, "").replace(WS_RUN, " ").trim()
+    : t;
+};
 const AV_FALLBACK = ["#8e8e93", "#636366"];
 /* w[0] is a UTF-16 code unit, not a character. A name that starts with an emoji
    — or any glyph outside the basic plane — was cut in half and drawn as a
@@ -1399,21 +1428,42 @@ try {
            through writing). Same rule as the number above: what is not a call
            is dropped on the way in. */
         && typeof d.when === "string" && d.when !== "")
-      .map(d => ({
-        number: d.number,
-        name: typeof d.name === "string" && d.name ? d.name : d.number,
-        when: d.when
-      }))
+      .map(d => {
+        /* The name is normalised here for the same reason hydrateNative()
+           normalises every name the bridge sends: it is what the row draws, and
+           this was the one entry point on the page that took a stored name
+           exactly as it found it. A row written before that rule existed — or
+           one naming a contact whose name was nothing but characters with no
+           shape — therefore drew an invisible title over a real number, and a
+           name carrying a doubled or edge space drew it that way too, while the
+           same person's row in Contacts read normally. A name with nothing to
+           draw is not a name: fall back to the number, exactly as the bridge
+           and hydrateNative() already do. */
+        const shown = normSpace(typeof d.name === "string" ? d.name : "");
+        return {
+          number: d.number,
+          name: (shown && !ONLY_JOINERS.test(shown)) ? shown : normSpace(d.number),
+          when: d.when
+        };
+      })
       /* the write path keeps 40 rows but the read path took whatever it found,
          so one oversized or hand-edited value rebuilt thousands of rows */
       .slice(0, 40);
-    /* ...and it was only trimmed in memory. A value longer than the cap — one
-       an older build wrote, or one edited by hand — stayed in storage for good,
-       so every launch parsed, filtered and mapped the whole thing again to
-       throw all but forty rows away. Write the trimmed list back the once it
-       differs from what was read. */
-    if (stored.length > dialed.length) {
-      try { localStorage.setItem("phone.dialed", JSON.stringify(dialed)); } catch (e) {}
+    /* ...and the repair was only ever made to the copy in memory. Writing the
+       list back when rows were *dropped* covered the oversized value, but not a
+       row that was merely repaired on the way in — a name that had to fall back
+       to its number, or one that had to be normalised — so the same unusable
+       entry was parsed and repaired again at every launch, for ever.
+       phone.glass is repaired the same way, and the rule it states is the one
+       this follows: write the sanitised value back only when it differs from
+       what was read. placeCall() and the de-duplication in hydrateNative()
+       both serialise exactly this shape, so a list this app wrote itself
+       compares equal and an ordinary launch writes nothing at all. */
+    if (saved !== null) {
+      try {
+        const want = JSON.stringify(dialed);
+        if (want !== saved) localStorage.setItem("phone.dialed", want);
+      } catch (e) { }
     }
   } else if (saved) {
     /* A value that is not a list at all — an object, a bare string, the literal
@@ -1545,30 +1595,10 @@ function fmtCached(v) {
    differed by a character nobody can see — and a name that *begins* with one was
    filed under a section header of nothing at all. Strip them from the key; the
    row still draws the name exactly as it is stored. */
-/* ...and the two replaces below ran for every string that came through here,
-   on the load path: hydrateNative() normalises a contact's number and its name,
-   and buildContactIdx() normalises the name again, so a 3000-contact book paid
-   three global regex passes per contact — eighteen thousand of them — on the
-   main thread before the first list could be drawn. A string with nothing to
-   normalise comes back exactly as it is, and that is nearly every name and
-   every number a device hands over. Only a string that is not plain printable
-   ASCII (a non-breaking space, a tab, an accent, a zero-width character) or one
-   with a leading, trailing or doubled space needs the work, and one test
-   answers all of it. The pattern carries no /g flag, so test() cannot leave a
-   lastIndex behind for the next call to start from. */
-const NEEDS_NORM = /[^\x20-\x7e]|^\s|\s$|\s\s/;
-/* the run-of-spaces collapse below, hoisted out of the function that uses it:
-   normSpace() runs for every contact's name on every hydrate (three times per
-   contact on a full read) and for every keystroke in the search box, and a
-   regex literal there compiled the same pattern again on each of them. It is
-   only ever handed to replace(), which resets lastIndex itself. */
-const WS_RUN = /\s+/g;
-const normSpace = s => {
-  const t = String(s == null ? "" : s);
-  return t && NEEDS_NORM.test(t)
-    ? t.replace(INVISIBLE, "").replace(WS_RUN, " ").trim()
-    : t;
-};
+/* NEEDS_NORM, WS_RUN and normSpace() are declared near the top of this script,
+   beside the INVISIBLE table they read — see the note there. They had to move:
+   the local call history is restored from storage between the two points, and
+   that restore is now one of their callers. */
 
 const NON_ASCII = /[^\x00-\x7f]/;
 /* Every mark NFD leaves behind is not a diacritic: the Arabic harakat and the
