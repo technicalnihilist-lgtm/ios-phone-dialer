@@ -2703,6 +2703,26 @@ function digitsIn(text) {
   }
   return n;
 }
+/* The digits before every character of a string: p[k] is how many of
+   text[0..k) are digits, so the count in any span is one subtraction.
+   The paste scanner asks "how many digits are in the head of this line" and
+   "how many in the tail" for every space and every tab it meets, and it used
+   to answer each of those by copying the text into a fresh slice and walking
+   it. That is the square of the line: a single-line clip of 2000 numbers took
+   1.4 s to paste (92% of it in this count), and a tab-separated one of 55 kB
+   took 27 s — the page is frozen for the whole of it, because the Paste menu
+   runs on the main thread. Counted once per line, the same answers cost
+   nothing and every decision below is unchanged. */
+function digitPrefix(text) {
+  const n = text.length, p = new Int32Array(n + 1);
+  let d = 0;
+  for (let i = 0; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c >= 48 && c <= 57) d++;
+    p[i + 1] = d;
+  }
+  return p;
+}
 /* Where one number inside a run ends and the next begins.
    A run is the longest stretch of characters that can belong to a number, and
    it was read as a single number however many numbers it actually held. That is
@@ -2761,12 +2781,34 @@ function runPieces(text, wordHead) {
     /* fours all the way through: one long number, and a space in it is not a
        boundary — see FOURS above */
     const fours = FOURS.test(piece);
+    /* The head of the piece is piece[start..i) and its tail is everything
+       after the space at i, and the two questions asked below — how many
+       digits are in each — were answered for every space by scanning a fresh
+       slice of the piece. That is the square of the piece: see digitPrefix().
+       Counted once here, in the same pass as the dots and the hashes the two
+       head tests need, so nothing below has to look at the text twice. */
+    const plen = piece.length;
+    const pref = new Int32Array(plen + 1), dots = new Int32Array(plen + 1),
+          hashes = new Int32Array(plen + 1);
+    let dcount = 0, tcount = 0, hcount = 0;
+    for (let k = 0; k < plen; k++) {
+      const cc = piece.charCodeAt(k);
+      if (cc >= 48 && cc <= 57) dcount++;
+      else if (cc === 46) tcount++;
+      else if (cc === 35) hcount++;
+      pref[k + 1] = dcount; dots[k + 1] = tcount; hashes[k + 1] = hcount;
+    }
+    const totalD = pref[plen];
     let start = 0;
-    for (let i = 0; i < piece.length; i++) {
+    for (let i = 0; i < plen; i++) {
       const ch = piece.charAt(i);
       if (!WS_ONE.test(ch)) continue;
-      const before = piece.slice(start, i);
-      const digits = digitsIn(before);
+      const digits = pref[i] - pref[start];
+      /* a head written with a dot in it is a version or a decimal wherever it
+         sits, and REF_HEAD needs a "#" to match at all, so a head with
+         neither can never satisfy the test below */
+      const dotted = dots[i] - dots[start] > 0;
+      const hashed = hashes[i] - hashes[start] > 0;
       /* The run itself can begin inside a word, and the space rules below need
          seven digits on each side of a space, so a short head never split and
          the word's tail was welded to the number after it. "v1.2.3 9876543210"
@@ -2799,17 +2841,17 @@ function runPieces(text, wordHead) {
          reference is refused on its own while the number behind it is kept.
          The CLIR prefix is the one leading "#" that is part of a dial string,
          and the test below already names it: leave that head whole. */
-      if ((wordHead || before.indexOf(".") >= 0 || REF_HEAD.test(before))
+      if ((wordHead || dotted || (hashed && REF_HEAD.test(piece.slice(start, i))))
           && p === 0 && start === 0 && digits >= 1 && digits < 7) {
         let j = i + 1;
-        while (j < piece.length && !WS_ONE.test(piece.charAt(j))) j++;
-        tail = digitsIn(piece.slice(i, j));
+        while (j < plen && !WS_ONE.test(piece.charAt(j))) j++;
+        tail = pref[j] - pref[i];
         /* ...and a head written with a dot in it is a version or a decimal, never
            the start of a telephone number, so a number after it counts as whole
            even when it is itself written in groups: "v2.6.61 98765 43210" and
            "rev 1.2 022-2345-6789" are a number with a label in front, not an
            eleven- and a thirteen-digit number. */
-        if (before.indexOf(".") >= 0) tail = Math.max(tail, digitsIn(piece.slice(i)));
+        if (dotted) tail = Math.max(tail, totalD - pref[i]);
       }
       /* ...and a head that is exactly the CLIR prefix is not a finished code:
          "#31# 9876543210" — the prefix written with a space before the number,
@@ -2818,11 +2860,11 @@ function runPieces(text, wordHead) {
          threw the number away. The "#" that ends this head introduces the
          number rather than closing a code, so leave the run whole and let
          firstDialRun() read the prefix and the digits together. */
-      if ((!fours && digits >= 7 && digitsIn(piece.slice(i)) >= 7)
-          || (digits >= 1 && before.charAt(before.length - 1) === "#"
-              && !CLIR_HEAD.test(before))
+      if ((!fours && digits >= 7 && totalD - pref[i] >= 7)
+          || (digits >= 1 && i > start && piece.charAt(i - 1) === "#"
+              && !CLIR_HEAD.test(piece.slice(start, i)))
           || tail >= 7) {
-        out.push(before);
+        out.push(piece.slice(start, i));
         start = i;
       }
     }
@@ -2848,18 +2890,20 @@ function runPieces(text, wordHead) {
    has "56" in front of its last space and is left exactly as it was. The note is
    dropped, and the number in front of it is kept, which is what the clip holds. */
 function noteTail(run, weldedTail) {
-  const total = digitsIn(run);
+  /* the digits after every space, counted once instead of by scanning a fresh
+     tail of the run for each of them — see digitPrefix() */
+  const pref = digitPrefix(run);
+  const total = pref[run.length];
   let cut = -1;
   for (let i = 0; i < run.length; i++) {
     const c = run.charCodeAt(i);
     if (c !== 0x20 && c !== 0x09) continue;
-    const tail = run.slice(i + 1);
-    const d = digitsIn(tail);
+    const d = total - pref[i + 1];
     /* a number's own last group is longer than this — "080 2345 6789" ends on
        four, "+91 98765 43210" on five, and the spaces inside one come before
        them all */
     if (d < 1 || d > 3) continue;
-    const head = tail.charAt(0);
+    const head = run.charAt(i + 1);
     /* what is left has to be a note and not the number's own tail: it opens
        with a bracket, a dash, a hash or a star, or it is welded to the word
        after it ("2nd", "9am"), or the two halves together are longer than any
@@ -2929,18 +2973,20 @@ function firstDialRun(s, keepVanity) {
     const rest = run0.slice(skip);
     let head = 0;
     if (rest.indexOf("+") < 0 && digitsIn(rest) > 12) {
+      /* the digits before each space, counted once — see digitPrefix() — and
+         the first digit of the head carried along as the scan goes, instead of
+         being looked for again in a fresh copy of the head at every space */
+      const rp = digitPrefix(rest);
+      const rTotal = rp[rest.length];
+      let first = "";
       for (let i = 0; i < rest.length; i++) {
-        if (!WS_ONE.test(rest.charAt(i))) continue;
-        const left = rest.slice(0, i), right = rest.slice(i + 1);
-        const l = digitsIn(left), r = digitsIn(right);
+        const c = rest.charAt(i);
+        if (c >= "0" && c <= "9") { if (first === "") first = c; continue; }
+        if (!WS_ONE.test(c)) continue;
+        const l = rp[i], r = rTotal - rp[i + 1];
         if (l < 1 || l > 6 || r < 7) continue;
         /* the first digit of the group: a trunk code ("022", "011") starts
            with a 0 and is the head of the number, not a quantity before it */
-        let first = "";
-        for (let k = 0; k < left.length; k++) {
-          const c = left.charAt(k);
-          if (c >= "0" && c <= "9") { first = c; break; }
-        }
         if (first === "0") continue;
         head = i + 1;
         break;
@@ -3092,9 +3138,6 @@ function firstDialRun(s, keepVanity) {
   }
   return fallback;
 }
-/* Every line and field separator there is, except the tab: what joinTabs()
-   counts the digits either side of one against. */
-const SEP_NO_TAB = /[\r\n\v\f\u0085\u2028\u2029]/;
 /* A tab is a field separator — a column of numbers lifted out of a spreadsheet
    is one number per cell — but it is also a character that sits inside one
    number: "Tel:\t98765\t43210", a number copied out of a table or a PDF, arrived
@@ -3104,12 +3147,44 @@ const SEP_NO_TAB = /[\r\n\v\f\u0085\u2028\u2029]/;
    hold; two whole numbers side by side ("555-1234\t987-6543" is fourteen
    digits) add up to more and stay two fields, which is what the split below is
    for. */
-const joinTabs = s => s.indexOf("\t") < 0 ? s : s.replace(/\t/g, (m, at, all) => {
-  let a = at, b = at + 1;
-  while (a > 0 && !SEP_NO_TAB.test(all.charAt(a - 1))) a--;
-  while (b < all.length && !SEP_NO_TAB.test(all.charAt(b))) b++;
-  return digitsIn(all.slice(a, at)) + digitsIn(all.slice(at + 1, b)) <= 12 ? " " : "\t";
-});
+/* A line or field separator other than the tab, asked by code point: this is
+   tested against every character of a pasted clip, and the pattern beside it
+   is the same set — \r, \n, \v, \f, NEL, the two Unicode line separators. */
+const isLineSep = c => c === 13 || c === 10 || c === 11 || c === 12
+  || c === 0x85 || c === 0x2028 || c === 0x2029;
+const joinTabs = s => {
+  if (s.indexOf("\t") < 0) return s;
+  /* Every tab used to walk left to its line's start and right to its line's
+     end, and count the digits in the two halves of that line — for each tab on
+     it. A clip with many tabs on one line therefore cost the square of the
+     line, and the Paste menu runs on the main thread: a tab-separated clip of
+     22 kB froze the page for 7 s and one of 55 kB for 44 s. The digits either
+     side of a tab are the digits of the whole line — the tab itself is not a
+     digit — so the answer is one count per line, not two per tab: measure each
+     line the first time a tab on it is reached, and answer every tab on that
+     line from it. replace() visits the tabs in order, so a line is measured
+     once and every later tab on it is answered from the measurement. The
+     question itself is unchanged. */
+  const n = s.length;
+  let pos = 0, lineEnd = 0, lineDigits = 0;
+  return s.replace(/\t/g, (m, at) => {
+    /* measure every line the tabs have moved past, from its own start, so the
+       digits in front of the first tab on a line are counted too */
+    while (at >= lineEnd) {
+      let b = pos, d = 0;
+      while (b < n) {
+        const c = s.charCodeAt(b);
+        if (isLineSep(c)) break;
+        if (c >= 48 && c <= 57) d++;
+        b++;
+      }
+      lineEnd = b; lineDigits = d;
+      pos = b === pos ? b + 1 : b;
+      if (pos >= n) { lineEnd = n + 1; break; }
+    }
+    return lineDigits <= 12 ? " " : "\t";
+  });
+};
 function dialable(txt) {
   /* The clipboard is the one place this page is handed text it did not build,
      and a number copied off a web page or out of a chat very often arrives as
