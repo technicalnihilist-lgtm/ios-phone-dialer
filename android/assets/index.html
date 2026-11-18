@@ -2860,7 +2860,18 @@ function runPieces(text, wordHead) {
          threw the number away. The "#" that ends this head introduces the
          number rather than closing a code, so leave the run whole and let
          firstDialRun() read the prefix and the digits together. */
-      if ((!fours && digits >= 7 && totalD - pref[i] >= 7)
+      /* ...and a landline written in its printed groups is one number, not two.
+         "022 2673 1234" reaches seven digits at its first space and eleven at
+         its second, so the first space read as the boundary between two whole
+         numbers and the clip was answered with "022 2673" — a seven-digit
+         number that is in neither the text nor anybody's dialler, put on the
+         keypad instead of the landline the clip carries, and dialled. A head
+         that opens with a trunk code ("022", "080", "(011)") and has not yet
+         reached ten digits is the start of such a number: the space after it is
+         inside it. The second space of the same landline is a real boundary,
+         and so is every trunk-coded head that has already reached ten digits. */
+      const trunkHead = /^\D*0/.test(piece.slice(start, i));
+      if ((!fours && !(trunkHead && digits < 10) && digits >= 7 && totalD - pref[i] >= 7)
           || (digits >= 1 && i > start && piece.charAt(i - 1) === "#"
               && !CLIR_HEAD.test(piece.slice(start, i)))
           || tail >= 7) {
@@ -2910,6 +2921,18 @@ function noteTail(run, weldedTail) {
        dialling string ("9876543210 022" is thirteen digits) — a number written
        two digits at a time ("06 12 34 56 78") is none of these and is kept
        whole. */
+    /* ...but a label in front of a service code is not a note with a number in
+       front of it: "(mobile) *123#" and "(IMEI) *#06#" — the way a card, a chat
+       line and a message print a code — arrive as the run ") *123#", and the
+       text after its space is the code itself. Cutting there left the single
+       character ")", which holds no digits and was refused, so the one thing
+       the clip was telling the user to dial put nothing on the keypad at all,
+       while the same code with its label behind it ("*123# (mobile)") already
+       pasted. A tail that is a code is not an annotation; leave the run whole
+       and let firstDialRun() read the code out of it. The head has to be a
+       label for this — with a number in front of it ("9876543210 *#06#") the
+       space really does separate two things, and the number is the answer. */
+    if (pref[i] === 0 && isCodeRun(run.slice(i + 1).replace(RUN_JUNK, ""))) continue;
     if (head === "(" || head === "#" || head === "*" || head === "-" || head === "."
         || weldedTail || total > 12) cut = i;
   }
@@ -2972,24 +2995,48 @@ function firstDialRun(s, keepVanity) {
        twelve digits or fewer, or they carry a "+". */
     const rest = run0.slice(skip);
     let head = 0;
-    if (rest.indexOf("+") < 0 && digitsIn(rest) > 12) {
-      /* the digits before each space, counted once — see digitPrefix() — and
-         the first digit of the head carried along as the scan goes, instead of
-         being looked for again in a fresh copy of the head at every space */
-      const rp = digitPrefix(rest);
-      const rTotal = rp[rest.length];
-      let first = "";
-      for (let i = 0; i < rest.length; i++) {
-        const c = rest.charAt(i);
-        if (c >= "0" && c <= "9") { if (first === "") first = c; continue; }
-        if (!WS_ONE.test(c)) continue;
-        const l = rp[i], r = rTotal - rp[i + 1];
-        if (l < 1 || l > 6 || r < 7) continue;
-        /* the first digit of the group: a trunk code ("022", "011") starts
-           with a 0 and is the head of the number, not a quantity before it */
-        if (first === "0") continue;
-        head = i + 1;
-        break;
+    /* One drop is not always enough, and a drop is not always right.
+       A clip that carries the same number twice — "98765 43210 98765 43210" —
+       still holds fifteen digits after the first group goes, and the remainder
+       was handed to runPieces() as one number: "432109876543210", which is
+       neither of the two numbers in the clip and short enough to pass the
+       fifteen-digit ceiling below, so it went on the keypad and Call dialled a
+       stranger. Keep dropping while what is left is still too long to be one
+       number, and stop as soon as runPieces() can split the remainder itself.
+       ...and a run that carries a bracket is a number written with its area
+       code — "(555) 123-4567" — where the bracketed group is part of the number
+       and not a quantity in front of one. Dropping there left
+       "123-4567 (987) 654-3210", and the answer was the tail of the first
+       number: "1234567". Leave those alone and let runPieces() split them at
+       the space between the two numbers. */
+    if (rest.indexOf("+") < 0 && rest.indexOf("(") < 0) {
+      let rem = rest;
+      while (digitsIn(rem) > 12) {
+        /* the digits before each space, counted once — see digitPrefix() — and
+           the first digit of the head carried along as the scan goes, instead of
+           being looked for again in a fresh copy of the head at every space */
+        const rp = digitPrefix(rem);
+        const rTotal = rp[rem.length];
+        let first = "", step = 0;
+        for (let i = 0; i < rem.length; i++) {
+          const c = rem.charAt(i);
+          if (c >= "0" && c <= "9") { if (first === "") first = c; continue; }
+          if (!WS_ONE.test(c)) continue;
+          const l = rp[i], r = rTotal - rp[i + 1];
+          if (l < 1 || l > 6 || r < 7) continue;
+          /* the first digit of the group: a trunk code ("022", "011") starts
+             with a 0 and is the head of the number, not a quantity before it */
+          if (first === "0") continue;
+          step = i + 1;
+          break;
+        }
+        if (!step) break;
+        head += step;
+        rem = rem.slice(step);
+        /* the drop exists only for a remainder runPieces() cannot split; going
+           on past one that already splits turned "1 800 555 1234
+           1 800 555 9999" into the second number */
+        if (runPieces(rem, false).length > 1) break;
       }
     }
     const pieces = runPieces(run0.slice(skip + head), wordHead);
