@@ -837,6 +837,15 @@ const INVISIBLE_ONE = new RegExp(INVISIBLE.source);
    itself. */
 const NEEDS_NORM = /[^\x20-\x7e]|^\s|\s$|\s\s/;
 const WS_RUN = /\s+/g;
+/* The same set, and the tab on its own, for the two places that split a string
+   into words and the one that splits a line on its tabs. Each of those carried
+   a literal of its own — a fresh RegExp object per call, on the name path that
+   draws every row of every list and on the paste path that walks a whole
+   clipboard — which is the defect every other pattern on this page was hoisted
+   for. Both are only ever handed to replace() or split(), neither of which
+   touches the lastIndex of the object it was given (split() works on its own
+   sticky copy), so the shared instances are safe. */
+const TAB_ALL = /\t/g;
 const normSpace = s => {
   const t = String(s == null ? "" : s);
   return t && NEEDS_NORM.test(t)
@@ -1247,7 +1256,7 @@ const initials = n => {
   const s = String(n == null ? "" : n);
   const words = PLAIN_NAME.test(s)
     ? s.split(" ")
-    : s.replace(INVISIBLE, "").trim().split(/\s+/).filter(Boolean);
+    : s.replace(INVISIBLE, "").trim().split(WS_RUN).filter(Boolean);
   const out = [];
   for (let i = 0; i < words.length && out.length < 2; i++) {
     const c = firstCodePoint(words[i]);
@@ -2196,7 +2205,19 @@ const decodeEscapes = s => s.replace(ESCAPE_RUN, seq => {
    sequence into the one number it spells before the runs are read, and only
    when it cannot be a date — a date is the one thing a clip holds that is
    written with slashes, and isDate()/isDateTail() already answer that. */
-const SLASH_SEQ = /[\s(]*\d{1,5}(?:\/\d{1,5})+/g;
+/* The head is capped at five digits and the groups after it are not: the cap is
+   what stops a ten-digit number being read from the middle of itself, and a
+   tail group longer than five — "022/2345678" — is still the end of the one
+   number the sequence spells. Only the head is matched against the text before
+   it (see the replacer in joinSlashes()); a capped tail would leave its own
+   digits behind and look like the tail of a longer number. */
+const SLASH_SEQ = /[\s(+]*\d{1,5}(?:\/\d+)+/g;
+/* The characters a number is written with, asked of the text either side of a
+   slash-separated sequence. A sequence that has one of them next to it is the
+   head or the tail of a longer number, not a number of its own — see the note
+   on the replacer in joinSlashes(). No `g` flag: it is only ever handed to
+   test(). */
+const NUM_EDGE = /[0-9().\-+]/;
 /* The three patterns joinSlashes() used to build inside the replacer it hands
    to that pass — a fresh RegExp object for every slash-separated sequence of
    every line of every pasted clip. Hoisted beside the pattern they are used
@@ -2241,7 +2262,26 @@ const DASHES = /[\u00ad\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g;
 const TRUNK = /(\d)[\s]*\([\s]*0[\s]*\)[\s]*/g;
 const joinSlashes = line => line.replace(INVISIBLE, " ").replace(DASHES, "-")
   .replace(TRUNK, "$1 ")
-  .replace(SLASH_SEQ, seq => {
+  .replace(SLASH_SEQ, (seq, at, all) => {
+  /* ...and only when the sequence is a number of its own. The pattern reads a
+     window of one to five digits between slashes, and nothing asked what sat
+     either side of that window, so two numbers written with a slash between
+     them were welded into one:
+       "5551234/5551235"            -> 55512345551235 (fourteen digits, a
+                                       stranger, and Call dialled it)
+       "9876543210/9876543211"      -> nothing at all (the weld is twenty
+                                       digits, so the fifteen-digit ceiling
+                                       below refused it)
+       "022-2345-6789/022-2345-6790"-> nothing at all, the same way
+     while a landline written with slashes — "022/2345/6789", "080/2345/6789"
+     — is one number and is why this pass exists. A sequence is one number only
+     when the text either side of it cannot belong to a number: one more digit,
+     bracket, dot, hyphen or sign and it is the head or the tail of a longer
+     one, and the runs either side are read separately, which is what the clip
+     actually holds. A leading "+" is part of the sequence now, so
+     "+91/98765/43210" joins into the number it prints. */
+  if ((at > 0 && NUM_EDGE.test(all.charAt(at - 1)))
+      || (at + seq.length < all.length && NUM_EDGE.test(all.charAt(at + seq.length)))) return seq;
   /* "14/11/2024", "2024/11/14" and the same date with the time after it are
      dates, and a sequence whose last group is too short to end a number
      ("9876543210/11") is not one number either */
@@ -2477,6 +2517,13 @@ const CLIR_HEAD = /^\s*#31#$/;
    is what tells the two apart without naming either. Looked at by runPieces()
    alone. No `g` flag: it is only ever handed to test(). */
 const REF_HEAD = /^\s*#[^#]*$/;
+/* The head of a number written with a trunk code — "022", "080", "(011)" —
+   asked of every space of every run. It was a literal inside runPieces()' scan
+   loop, so a fresh RegExp object was built for each of them: a clip of prose
+   with a thousand spaces built a thousand of them, on the main thread, inside
+   the Paste menu. Hoisted beside the two patterns above it, for the reason
+   they give. No `g` flag: it is only ever handed to test(). */
+const TRUNK_HEAD = /^\D*0/;
 /* The emphasis strip in firstDialRun(), hoisted out of the loop it sits in for
    the reason RUN_JUNK above gives: a regex literal is a fresh RegExp object
    every time it is evaluated, and this one was evaluated for every run of a
@@ -2870,7 +2917,7 @@ function runPieces(text, wordHead) {
          reached ten digits is the start of such a number: the space after it is
          inside it. The second space of the same landline is a real boundary,
          and so is every trunk-coded head that has already reached ten digits. */
-      const trunkHead = /^\D*0/.test(piece.slice(start, i));
+      const trunkHead = TRUNK_HEAD.test(piece.slice(start, i));
       if ((!fours && !(trunkHead && digits < 10) && digits >= 7 && totalD - pref[i] >= 7)
           || (digits >= 1 && i > start && piece.charAt(i - 1) === "#"
               && !CLIR_HEAD.test(piece.slice(start, i)))
@@ -3214,7 +3261,7 @@ const joinTabs = s => {
      question itself is unchanged. */
   const n = s.length;
   let pos = 0, lineEnd = 0, lineDigits = 0;
-  return s.replace(/\t/g, (m, at) => {
+  return s.replace(TAB_ALL, (m, at) => {
     /* measure every line the tabs have moved past, from its own start, so the
        digits in front of the first tab on a line are counted too */
     while (at >= lineEnd) {
@@ -3586,7 +3633,7 @@ function renderFavs() {
          while the same person's row in Contacts read "Ravi Kumar". Take the
          first word that actually has a character to draw; every ordinary name
          answers on its first word, exactly as it did before. */
-      const words = String(p.n == null ? "" : p.n).split(/\s+/);
+      const words = String(p.n == null ? "" : p.n).split(WS_RUN);
       let first = "";
       for (let w = 0; w < words.length; w++) {
         /* the word the test accepts is the word that gets drawn: the raw word
@@ -3663,7 +3710,14 @@ const dialedPerson = new WeakMap();
 function dialedRow(d) {
   let r = dialedPerson.get(d);
   if (r === undefined) {
-    r = { p: { n: d.name, t: d.number, c: ["#8e8e93", "#636366"] }, when: d.when, kind: "out", label: "mobile" };
+    /* the avatar pair is AV_FALLBACK itself, not a second copy of it. These two
+       colours were written out here as well as at the top of the page, so the
+       grey a locally dialled row draws and the grey a contact with no palette
+       draws were the same value kept in two places — and the day one of them
+       is changed the two rows would disagree for no reason. avColors() already
+       answers with exactly this array for a contact that carries no palette,
+       so the row is unchanged; there is just one copy of it now. */
+    r = { p: { n: d.name, t: d.number, c: AV_FALLBACK }, when: d.when, kind: "out", label: "mobile" };
     dialedPerson.set(d, r);
   }
   return r;
