@@ -4271,6 +4271,25 @@ const DIAL_REPEAT_MS = 1200;
    Recents de-duplication below) is hoisted with fmt(). */
 const DIAL_JUNK = /[^\d+*#]/g;
 const HAS_DIGIT = /[0-9]/;
+/* A dial string can carry a pause or a wait between the number and the digits
+   that are sent after it: "," is a hard pause, ";" waits for the far end to
+   answer, and both are written by the Contacts app itself when a pause is
+   inserted into a number. Neither is part of the number, and neither is
+   something the far end can be dialled at — the digits after them are sent as
+   DTMF once the call is up. The two entry points that take a string from
+   outside this page — placeCall(), which is handed a contact's number as the
+   device stored it, and __phoneNumber(), which is handed a tel: link — each
+   cut the string at ";" and then stripped every character that cannot belong
+   to a number, so the pause's own "," was deleted and the digits behind it
+   were welded onto the front: a contact saved as "555-1234,89" dialled
+   555123489 from the Contacts list, and a "tel:5551234,89" link put
+   "(555) 123-489" on the keypad — both a different subscriber from the one
+   written down, and neither the number the row draws, because dispNum() shows
+   the pause exactly as it is stored. The Paste menu already answers this: a
+   "," is not a character DIAL_RUN accepts, so a clip is cut there and dials
+   the number in front of it. Cut at both characters here, so the three entry
+   points agree. No `g` flag: only ever handed to split(). */
+const DIAL_CUT = /[;,]/;
 
 function placeCall(number, name) {
   const raw = String(number == null ? "" : number);
@@ -4278,8 +4297,21 @@ function placeCall(number, name) {
      — and ";" is a separator, never part of a number: __phoneNumber() already
      cuts a tel: link there for exactly this reason. Here the parameter was
      stripped of its ";" and welded onto the number, so a contact saved as
-     "555-1234;89" dialled 555123489, a different subscriber altogether. */
-  const kept = raw.split(";")[0].replace(DIAL_JUNK, "");
+     "555-1234;89" dialled 555123489, a different subscriber altogether.
+     ...and the "," a pause is written with was welded on in exactly the same
+     way, because this line only ever cut at ";": see DIAL_CUT above. */
+  /* ...and the trunk "0" a number is printed with inside its country code —
+     "+91 (0) 98765 43210" on an Indian card, "+44 (0) 20 7946 0958" on a
+     British one — is not a digit of the number. The Paste menu drops it (see
+     TRUNK) and __phoneNumber() drops it, and this path kept it: the same
+     contact pasted onto the keypad and tapped in the list produced two
+     different strings, and the one from the list — "+9109876543210" — is a
+     number no network accepts, so the call failed or reached nobody. One rule
+     for all three entry points, exactly as the "#" and the escapes above are.
+     TRUNK only answers a bracketed zero that follows a digit, so the bracketed
+     group at the head of a number — the area code of "(022) 2345 6789" — is
+     untouched, and so is every number that carries no country code. */
+  const kept = raw.replace(TRUNK, "$1 ").split(DIAL_CUT)[0].replace(DIAL_JUNK, "");
   /* "+" is only a dialling prefix when it comes first. Holding 0 — or pressing
      shift and "=" on a keyboard — in the middle of a number put it there too, and
      the number went to telecom as "tel:555+9": not a dialable number, so the call
@@ -5109,7 +5141,12 @@ window.__phoneNumber = function (n) {
      see decodeEscapes() */
   try { text = decodeURIComponent(text); } catch (e) { text = decodeEscapes(text); }
   /* "tel:123;ext=6" — the part after the semicolon is not the number, and its
-     digits would otherwise end up on the end of it */
+     digits would otherwise end up on the end of it.
+     ...and neither is the part after the "," a pause is written with, which
+     this line welded on exactly as it welded the semicolon's parameters:
+     "tel:5551234,89" — a number the Contacts app stored with a pause, handed
+     over by the link that dials it — put "(555) 123-489" on the keypad, a
+     different subscriber from the one written down. See DIAL_CUT. */
   /* same rule as the Paste menu: a number or code that does not fit the keypad
      is left out rather than cut to fit it — see the paste handler above */
   /* ...and the trunk "0" a number is printed with inside its country code —
@@ -5118,7 +5155,7 @@ window.__phoneNumber = function (n) {
      tapped in a link produced two different strings, and the one from the link
      — "+9109876543210" — is a number no network accepts. One rule for both
      entry points, exactly as the "#" and the escapes above are. */
-  const clean = text.replace(TRUNK, "$1 ").split(";")[0].replace(DIAL_JUNK, "");
+  const clean = text.replace(TRUNK, "$1 ").split(DIAL_CUT)[0].replace(DIAL_JUNK, "");
   if (!clean || clean.length > KEYPAD_MAX) return;
   value = clean;
   /* A tel: link comes from outside this app — a message, a browser, a contact
