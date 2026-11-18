@@ -3171,7 +3171,16 @@ function firstDialRun(s, keepVanity) {
          is asked for here: three groups of exactly four, each separated from the
          next by the characters a block like this is written with. A twelve-digit
          number with no separators in it is left exactly as it was. */
-      if (digits === 12 && FOURS_12.test(piece)) continue;
+      /* ...but a run that opens with "+" is a dialling string with a country
+         code, and an Aadhaar number or an IMEI is never written with one. The
+         test above is asked of the digits alone, so it could not tell them
+         apart: a twelve-digit international number printed as three groups of
+         four — "+4420 7946 0958" (London with the 20 attached to the 44),
+         "+8610 1234 5678" (Beijing, the same way), and the hyphen spellings of
+         both — matched the block and was refused, so pasting one of them put
+         nothing on the keypad at all. A leading "+" is the one character that
+         says "this is a number to dial", so it is answered first. */
+      if (digits === 12 && run.charAt(0) !== "+" && FOURS_12.test(piece)) continue;
       if (digits < 7) {
         /* ...and the head of a vanity number: skipped here, but kept as the
            answer of last resort, so a clip that holds nothing else still pastes
