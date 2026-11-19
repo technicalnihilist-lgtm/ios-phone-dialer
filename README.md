@@ -1,10 +1,10 @@
 <div align="center">
 
+<img src="assets/icon.png" width="96" height="96" alt="A pixel-faithful iOS Phone app for Android icon">
+
+<img src="assets/banner.svg" alt="A pixel-faithful iOS Phone app for Android — real contacts, real call log, real calls, and a native…">
+
 <a href="https://github.com/technicalnihilist-lgtm/ios-phone-dialer/stargazers"><img src="https://img.shields.io/badge/stars-2-5A31F4?style=for-the-badge&logo=github&logoColor=white" alt="stars: 2"></a>&nbsp;<a href="https://github.com/technicalnihilist-lgtm/ios-phone-dialer/network/members"><img src="https://img.shields.io/badge/forks-0-3FB950?style=for-the-badge" alt="forks: 0"></a>
-
-<h3>A pixel-faithful iOS Phone app for Android — real contacts, real call log, real calls, and a native…</h3>
-
-<img src="https://img.shields.io/badge/HTML-5865F2?style=flat-square" alt="HTML"> <img src="https://img.shields.io/badge/Android-3B3F4A?style=flat-square" alt="Android"> <img src="https://img.shields.io/badge/APK-3FB950?style=flat-square" alt="APK"> <img src="https://img.shields.io/badge/Dialer-EC4899?style=flat-square" alt="Dialer">
 
 <a href="https://github.com/technicalnihilist-lgtm/ios-phone-dialer/releases/latest"><img src="https://img.shields.io/badge/DOWNLOAD-APK-6D5AE6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"></a> <a href="https://technicalnihilist-lgtm.github.io/ios-phone-dialer/"><img src="https://img.shields.io/badge/OPEN-WEBSITE-EC4899?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a>
 
@@ -16,13 +16,7 @@
 
 <a href="https://github.com/technicalnihilist-lgtm/ios-phone-dialer/releases/latest"><img src="https://img.shields.io/badge/VERSION-v2.3-6D5AE6?style=for-the-badge" alt="VERSION: v2.3"></a> <img src="https://img.shields.io/badge/DOWNLOADS-1.2K-3FB950?style=for-the-badge" alt="DOWNLOADS: 1.2K"> <a href="https://technicalnihilist-lgtm.github.io/ios-phone-dialer/"><img src="https://img.shields.io/badge/WEBSITE-LIVE-EC4899?style=for-the-badge&logo=googlechrome&logoColor=white" alt="WEBSITE: LIVE"></a>
 
-<h4>Get it from</h4>
-
-<a href="https://github.com/technicalnihilist-lgtm/ios-phone-dialer/releases"><img src="https://img.shields.io/badge/GitHub-Releases-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Releases"></a> <a href="https://technicalnihilist-lgtm.github.io/ios-phone-dialer/"><img src="https://img.shields.io/badge/Website-Live-EC4899?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a> <a href="https://github.com/technicalnihilist-lgtm/ios-phone-dialer/archive/refs/heads/main.zip"><img src="https://img.shields.io/badge/Source-ZIP-0EA5E9?style=for-the-badge&logo=github&logoColor=white" alt="Source ZIP"></a>
-
 </div>
-
----
 
 ---
 
